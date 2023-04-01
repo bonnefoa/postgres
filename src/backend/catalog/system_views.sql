@@ -860,6 +860,7 @@ CREATE VIEW pg_stat_activity AS
             S.xact_start,
             S.query_start,
             S.state_change,
+            S.statement_timeout,
             S.wait_event_type,
             S.wait_event,
             S.state,

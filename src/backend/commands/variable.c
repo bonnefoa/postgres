@@ -1055,6 +1055,16 @@ assign_application_name(const char *newval, void *extra)
 }
 
 /*
+ * GUC assign_hook for statement_timeout
+ */
+void
+assign_statement_timeout(int newval, void *extra)
+{
+	/* Update the pg_stat_activity view */
+	pgstat_report_statement_timeout(newval);
+}
+
+/*
  * GUC check_hook for cluster_name
  */
 bool

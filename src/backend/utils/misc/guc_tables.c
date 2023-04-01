@@ -2478,7 +2478,7 @@ struct config_int ConfigureNamesInt[] =
 		},
 		&StatementTimeout,
 		0, 0, INT_MAX,
-		NULL, NULL, NULL
+		NULL, assign_statement_timeout, NULL
 	},
 
 	{

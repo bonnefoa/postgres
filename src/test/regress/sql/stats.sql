@@ -535,6 +535,11 @@ SET enable_seqscan TO on;
 SELECT pg_stat_get_replication_slot(NULL);
 SELECT pg_stat_get_subscription_stats(NULL);
 
+-- Test statement_timeout report
+set statement_timeout = '1d';
+SELECT statement_timeout FROM pg_stat_activity WHERE pid=pg_backend_pid();
+set statement_timeout = 0;
+SELECT statement_timeout FROM pg_stat_activity WHERE pid=pg_backend_pid();
 
 -- Test that the following operations are tracked in pg_stat_io:
 -- - reads of target blocks into shared buffers

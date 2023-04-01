@@ -336,6 +336,7 @@ pgstat_bestart(void)
 	lbeentry.st_activity_start_timestamp = 0;
 	lbeentry.st_state_start_timestamp = 0;
 	lbeentry.st_xact_start_timestamp = 0;
+	lbeentry.st_statement_timeout = 0;
 	lbeentry.st_databaseid = MyDatabaseId;
 
 	/* We have userid for client-backends, wal-sender and bgworker processes */
@@ -446,9 +447,11 @@ pgstat_bestart(void)
 
 	PGSTAT_END_WRITE_ACTIVITY(vbeentry);
 
-	/* Update app name to current GUC setting */
-	if (application_name)
+	/* Update app name and statement timeout to current GUC setting */
+	if (application_name) {
 		pgstat_report_appname(application_name);
+		pgstat_report_statement_timeout(StatementTimeout);
+	}
 }
 
 /*
@@ -691,6 +694,33 @@ pgstat_report_appname(const char *appname)
 
 	PGSTAT_END_WRITE_ACTIVITY(beentry);
 }
+
+/* ----------
+ * pgstat_report_statement_timeout() -
+ *
+ *	Called to update statement_timeout.
+ * ----------
+ */
+void
+pgstat_report_statement_timeout(int statement_timeout)
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+
+	if (!beentry)
+		return;
+
+	/*
+	 * Update my status entry, following the protocol of bumping
+	 * st_changecount before and after.  We use a volatile pointer here to
+	 * ensure the compiler doesn't try to get cute.
+	 */
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
+
+	beentry->st_statement_timeout = statement_timeout;
+
+	PGSTAT_END_WRITE_ACTIVITY(beentry);
+}
+
 
 /*
  * Report current transaction start timestamp as the specified value.
