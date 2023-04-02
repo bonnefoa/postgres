@@ -35,6 +35,8 @@ SessionEndType pgStatSessionEndCause = DISCONNECT_NORMAL;
 static int	pgStatXactCommit = 0;
 static int	pgStatXactRollback = 0;
 static PgStat_Counter pgLastSessionReportTime = 0;
+static PgStat_Counter pgCancelQueries = 0;
+static PgStat_Counter pgStatTimeouts[USER_TIMEOUT] = {0};
 
 
 /*
@@ -242,6 +244,19 @@ pgstat_fetch_stat_dbentry(Oid dboid)
 		pgstat_fetch_entry(PGSTAT_KIND_DATABASE, dboid, InvalidOid);
 }
 
+/*
+ * Notify stats system of a new timeout.
+ */
+void
+pgstat_report_timeout(TimeoutId timeoutId)
+{
+	if (timeoutId == MAX_TIMEOUTS) {
+		pgCancelQueries++;
+	} else if (timeoutId < USER_TIMEOUT) {
+		pgStatTimeouts[timeoutId]++;
+	}
+}
+
 void
 AtEOXact_PgStat_Database(bool isCommit, bool parallel)
 {
@@ -295,12 +310,28 @@ pgstat_update_dbstats(TimestampTz ts)
 		dbentry->idle_in_transaction_time += pgStatTransactionIdleTime;
 	}
 
+	dbentry->queries_canceled += pgCancelQueries;
+	dbentry->timeout_startup_packet += pgStatTimeouts[STARTUP_PACKET_TIMEOUT];
+	dbentry->timeout_deadlock += pgStatTimeouts[DEADLOCK_TIMEOUT];
+	dbentry->timeout_lock += pgStatTimeouts[LOCK_TIMEOUT];
+	dbentry->timeout_statement += pgStatTimeouts[STATEMENT_TIMEOUT];
+	dbentry->timeout_standby_deadlock += pgStatTimeouts[STANDBY_DEADLOCK_TIMEOUT];
+	dbentry->timeout_standby += pgStatTimeouts[STANDBY_TIMEOUT];
+	dbentry->timeout_standby_lock += pgStatTimeouts[STANDBY_LOCK_TIMEOUT];
+	dbentry->timeout_idle_in_transaction += pgStatTimeouts[IDLE_IN_TRANSACTION_SESSION_TIMEOUT];
+	dbentry->timeout_idle_session += pgStatTimeouts[IDLE_SESSION_TIMEOUT];
+	dbentry->timeout_idle_stats_update += pgStatTimeouts[IDLE_STATS_UPDATE_TIMEOUT];
+	dbentry->timeout_client_connection_check += pgStatTimeouts[CLIENT_CONNECTION_CHECK_TIMEOUT];
+	dbentry->timeout_startup_progress += pgStatTimeouts[STARTUP_PROGRESS_TIMEOUT];
+
 	pgStatXactCommit = 0;
 	pgStatXactRollback = 0;
 	pgStatBlockReadTime = 0;
 	pgStatBlockWriteTime = 0;
 	pgStatActiveTime = 0;
 	pgStatTransactionIdleTime = 0;
+	pgCancelQueries = 0;
+	MemSet(&pgStatTimeouts, 0, sizeof(pgStatTimeouts));
 }
 
 /*
@@ -408,6 +439,20 @@ pgstat_database_flush_cb(PgStat_EntryRef *entry_ref, bool nowait)
 	PGSTAT_ACCUM_DBCOUNT(sessions_abandoned);
 	PGSTAT_ACCUM_DBCOUNT(sessions_fatal);
 	PGSTAT_ACCUM_DBCOUNT(sessions_killed);
+
+	PGSTAT_ACCUM_DBCOUNT(queries_canceled);
+	PGSTAT_ACCUM_DBCOUNT(timeout_startup_packet);
+	PGSTAT_ACCUM_DBCOUNT(timeout_deadlock);
+	PGSTAT_ACCUM_DBCOUNT(timeout_lock);
+	PGSTAT_ACCUM_DBCOUNT(timeout_statement);
+	PGSTAT_ACCUM_DBCOUNT(timeout_standby_deadlock);
+	PGSTAT_ACCUM_DBCOUNT(timeout_standby);
+	PGSTAT_ACCUM_DBCOUNT(timeout_standby_lock);
+	PGSTAT_ACCUM_DBCOUNT(timeout_idle_in_transaction);
+	PGSTAT_ACCUM_DBCOUNT(timeout_idle_session);
+	PGSTAT_ACCUM_DBCOUNT(timeout_idle_stats_update);
+	PGSTAT_ACCUM_DBCOUNT(timeout_client_connection_check);
+	PGSTAT_ACCUM_DBCOUNT(timeout_startup_progress);
 #undef PGSTAT_ACCUM_DBCOUNT
 
 	pgstat_unlock_entry(entry_ref);

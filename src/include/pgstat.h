@@ -17,6 +17,7 @@
 #include "utils/backend_progress.h" /* for backward compatibility */
 #include "utils/backend_status.h"	/* for backward compatibility */
 #include "utils/relcache.h"
+#include "utils/timeout.h"
 #include "utils/wait_event.h"	/* for backward compatibility */
 
 
@@ -348,6 +349,20 @@ typedef struct PgStat_StatDBEntry
 	PgStat_Counter sessions_fatal;
 	PgStat_Counter sessions_killed;
 
+	PgStat_Counter queries_canceled;
+	PgStat_Counter timeout_startup_packet;
+	PgStat_Counter timeout_deadlock;
+	PgStat_Counter timeout_lock;
+	PgStat_Counter timeout_statement;
+	PgStat_Counter timeout_standby_deadlock;
+	PgStat_Counter timeout_standby;
+	PgStat_Counter timeout_standby_lock;
+	PgStat_Counter timeout_idle_in_transaction;
+	PgStat_Counter timeout_idle_session;
+	PgStat_Counter timeout_idle_stats_update;
+	PgStat_Counter timeout_client_connection_check;
+	PgStat_Counter timeout_startup_progress;
+
 	TimestampTz stat_reset_timestamp;
 } PgStat_StatDBEntry;
 
@@ -538,6 +553,7 @@ extern void pgstat_report_deadlock(void);
 extern void pgstat_report_checksum_failures_in_db(Oid dboid, int failurecount);
 extern void pgstat_report_checksum_failure(void);
 extern void pgstat_report_connect(Oid dboid);
+extern void pgstat_report_timeout(TimeoutId timeoutId);
 
 #define pgstat_count_buffer_read_time(n)							\
 	(pgStatBlockReadTime += (n))

@@ -782,6 +782,36 @@ SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELEC
  t
 (1 row)
 
+-- Test timeout report
+SELECT * FROM pg_stat_database_timeouts;
+ datid |  datname   | queries_canceled | timeout_startup_packet | timeout_deadlock | timeout_lock | timeout_statement | timeout_standby_deadlock | timeout_standby | timeout_standby_lock | timeout_idle_in_transaction | timeout_idle_session | timeout_idle_stats_update | timeout_client_connection_check | timeout_startup_progress 
+-------+------------+------------------+------------------------+------------------+--------------+-------------------+--------------------------+-----------------+----------------------+-----------------------------+----------------------+---------------------------+---------------------------------+--------------------------
+     5 | postgres   |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+     1 | template1  |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+     4 | template0  |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+ 16384 | regression |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+(4 rows)
+
+BEGIN;
+SET LOCAL statement_timeout = 1;
+SELECT pg_sleep(1);
+ERROR:  canceling statement due to statement timeout
+ROLLBACK;
+select pg_sleep(1);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+SELECT * FROM pg_stat_database_timeouts;
+ datid |  datname   | queries_canceled | timeout_startup_packet | timeout_deadlock | timeout_lock | timeout_statement | timeout_standby_deadlock | timeout_standby | timeout_standby_lock | timeout_idle_in_transaction | timeout_idle_session | timeout_idle_stats_update | timeout_client_connection_check | timeout_startup_progress 
+-------+------------+------------------+------------------------+------------------+--------------+-------------------+--------------------------+-----------------+----------------------+-----------------------------+----------------------+---------------------------+---------------------------------+--------------------------
+     5 | postgres   |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+     1 | template1  |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+     4 | template0  |                0 |                      0 |                0 |            0 |                 0 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+ 16384 | regression |                0 |                      0 |                0 |            0 |                 1 |                        0 |               0 |                    0 |                           0 |                    0 |                         0 |                               0 |                        0
+(4 rows)
+
 -- Test pg_stat_bgwriter checkpointer-related stats, together with pg_stat_wal
 SELECT checkpoints_req AS rqst_ckpts_before FROM pg_stat_bgwriter \gset
 -- Test pg_stat_wal (and make a temp table so our temp schema exists)

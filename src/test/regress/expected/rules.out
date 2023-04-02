@@ -1871,6 +1871,22 @@ pg_stat_database_conflicts| SELECT oid AS datid,
     pg_stat_get_db_conflict_bufferpin(oid) AS confl_bufferpin,
     pg_stat_get_db_conflict_startup_deadlock(oid) AS confl_deadlock
    FROM pg_database d;
+pg_stat_database_timeouts| SELECT oid AS datid,
+    datname,
+    pg_stat_get_db_queries_canceled(oid) AS queries_canceled,
+    pg_stat_get_db_timeout_startup_packet(oid) AS timeout_startup_packet,
+    pg_stat_get_db_timeout_deadlock(oid) AS timeout_deadlock,
+    pg_stat_get_db_timeout_lock(oid) AS timeout_lock,
+    pg_stat_get_db_timeout_statement(oid) AS timeout_statement,
+    pg_stat_get_db_timeout_standby_deadlock(oid) AS timeout_standby_deadlock,
+    pg_stat_get_db_timeout_standby(oid) AS timeout_standby,
+    pg_stat_get_db_timeout_standby_lock(oid) AS timeout_standby_lock,
+    pg_stat_get_db_timeout_idle_in_transaction(oid) AS timeout_idle_in_transaction,
+    pg_stat_get_db_timeout_idle_session(oid) AS timeout_idle_session,
+    pg_stat_get_db_timeout_idle_stats_update(oid) AS timeout_idle_stats_update,
+    pg_stat_get_db_timeout_client_connection_check(oid) AS timeout_client_connection_check,
+    pg_stat_get_db_timeout_startup_progress(oid) AS timeout_startup_progress
+   FROM pg_database d;
 pg_stat_gssapi| SELECT pid,
     gss_auth AS gss_authenticated,
     gss_princ AS principal,

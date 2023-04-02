@@ -1039,6 +1039,45 @@ PG_STAT_GET_DBENTRY_INT64(sessions_fatal)
 /* pg_stat_get_db_sessions_killed */
 PG_STAT_GET_DBENTRY_INT64(sessions_killed)
 
+/* pg_stat_get_db_queries_canceled */
+PG_STAT_GET_DBENTRY_INT64(queries_canceled)
+
+/* pg_stat_get_db_timeout_startup_packet */
+PG_STAT_GET_DBENTRY_INT64(timeout_startup_packet)
+
+/* pg_stat_get_db_timeout_deadlock */
+PG_STAT_GET_DBENTRY_INT64(timeout_deadlock)
+
+/* pg_stat_get_db_timeout_lock */
+PG_STAT_GET_DBENTRY_INT64(timeout_lock)
+
+/* pg_stat_get_db_timeout_statement */
+PG_STAT_GET_DBENTRY_INT64(timeout_statement)
+
+/* pg_stat_get_db_timeout_standby_deadlock */
+PG_STAT_GET_DBENTRY_INT64(timeout_standby_deadlock)
+
+/* pg_stat_get_db_timeout_standby */
+PG_STAT_GET_DBENTRY_INT64(timeout_standby)
+
+/* pg_stat_get_db_timeout_standby_lock */
+PG_STAT_GET_DBENTRY_INT64(timeout_standby_lock)
+
+/* pg_stat_get_db_timeout_idle_in_transaction */
+PG_STAT_GET_DBENTRY_INT64(timeout_idle_in_transaction)
+
+/* pg_stat_get_db_timeout_idle_session */
+PG_STAT_GET_DBENTRY_INT64(timeout_idle_session)
+
+/* pg_stat_get_db_timeout_idle_stats_update */
+PG_STAT_GET_DBENTRY_INT64(timeout_idle_stats_update)
+
+/* pg_stat_get_db_timeout_client_connection_check */
+PG_STAT_GET_DBENTRY_INT64(timeout_client_connection_check)
+
+/* pg_stat_get_db_timeout_startup_progress */
+PG_STAT_GET_DBENTRY_INT64(timeout_startup_progress)
+
 /* pg_stat_get_db_temp_bytes */
 PG_STAT_GET_DBENTRY_INT64(temp_bytes)
 

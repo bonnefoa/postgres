@@ -387,6 +387,20 @@ SELECT sessions AS db_stat_sessions FROM pg_stat_database WHERE datname = (SELEC
 SELECT pg_stat_force_next_flush();
 SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database());
 
+
+-- Test timeout report
+SELECT * FROM pg_stat_database_timeouts;
+
+BEGIN;
+SET LOCAL statement_timeout = 1;
+SELECT pg_sleep(1);
+ROLLBACK;
+
+select pg_sleep(1);
+
+SELECT * FROM pg_stat_database_timeouts;
+
+
 -- Test pg_stat_bgwriter checkpointer-related stats, together with pg_stat_wal
 SELECT checkpoints_req AS rqst_ckpts_before FROM pg_stat_bgwriter \gset
 

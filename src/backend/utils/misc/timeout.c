@@ -805,6 +805,20 @@ get_timeout_indicator(TimeoutId id, bool reset_indicator)
 	return false;
 }
 
+TimeoutId
+get_timeout_fired(void)
+{
+	int			i;
+	for (i = 0; i < MAX_TIMEOUTS; i++)
+	{
+		if (all_timeouts[i].indicator)
+		{
+			return i;
+		}
+	}
+	return MAX_TIMEOUTS;
+}
+
 /*
  * Return the time when the timeout was most recently activated
  *

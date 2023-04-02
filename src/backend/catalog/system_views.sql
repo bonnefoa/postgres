@@ -1070,6 +1070,25 @@ CREATE VIEW pg_stat_database_conflicts AS
             pg_stat_get_db_conflict_startup_deadlock(D.oid) AS confl_deadlock
     FROM pg_database D;
 
+CREATE VIEW pg_stat_database_timeouts AS
+    SELECT
+            D.oid AS datid,
+            D.datname AS datname,
+            pg_stat_get_db_queries_canceled(D.oid) AS queries_canceled,
+            pg_stat_get_db_timeout_startup_packet(D.oid) AS timeout_startup_packet,
+            pg_stat_get_db_timeout_deadlock(D.oid) AS timeout_deadlock,
+            pg_stat_get_db_timeout_lock(D.oid) AS timeout_lock,
+            pg_stat_get_db_timeout_statement(D.oid) AS timeout_statement,
+            pg_stat_get_db_timeout_standby_deadlock(D.oid) AS timeout_standby_deadlock,
+            pg_stat_get_db_timeout_standby(D.oid) AS timeout_standby,
+            pg_stat_get_db_timeout_standby_lock(D.oid) AS timeout_standby_lock,
+            pg_stat_get_db_timeout_idle_in_transaction(D.oid) AS timeout_idle_in_transaction,
+            pg_stat_get_db_timeout_idle_session(D.oid) AS timeout_idle_session,
+            pg_stat_get_db_timeout_idle_stats_update(D.oid) AS timeout_idle_stats_update,
+            pg_stat_get_db_timeout_client_connection_check(D.oid) AS timeout_client_connection_check,
+            pg_stat_get_db_timeout_startup_progress(D.oid) AS timeout_startup_progress
+    FROM pg_database D;
+
 CREATE VIEW pg_stat_user_functions AS
     SELECT
             P.oid AS funcid,

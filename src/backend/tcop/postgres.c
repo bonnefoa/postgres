@@ -3327,6 +3327,9 @@ ProcessInterrupts(void)
 
 		QueryCancelPending = false;
 
+		TimeoutId fired_timeout = get_timeout_fired();
+		pgstat_report_timeout(fired_timeout);
+
 		/*
 		 * If LOCK_TIMEOUT and STATEMENT_TIMEOUT indicators are both set, we
 		 * need to clear both, so always fetch both.
