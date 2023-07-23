@@ -158,8 +158,20 @@ pgstat_slru_flush(bool nowait)
 	PgStatShared_SLRU *stats_shmem = &pgStatLocal.shmem->slru;
 	int			i;
 
-	if (!have_slrustats)
+	if (!have_slrustats) {
+		for (i = 0; i < SLRU_NUM_ELEMENTS; i++)
+		{
+			PgStat_SLRUStats *pendingent = &pending_SLRUStats[i];
+			Assert(pendingent->blocks_zeroed == 0);
+			Assert(pendingent->blocks_hit     == 0);
+			Assert(pendingent->blocks_read    == 0);
+			Assert(pendingent->blocks_written == 0);
+			Assert(pendingent->blocks_exists  == 0);
+			Assert(pendingent->flush          == 0);
+			Assert(pendingent->truncate       == 0);
+		}
 		return false;
+	}
 
 	if (!nowait)
 		LWLockAcquire(&stats_shmem->lock, LW_EXCLUSIVE);
