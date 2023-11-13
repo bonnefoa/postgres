@@ -1399,6 +1399,17 @@ SELECT 4 AS four \; SELECT 5 AS five \aset
     </listitem>
    </varlistentry>
 
+   <varlistentry id="pgbench-metacommand-syncpipeline">
+    <term><literal>\syncpipeline</literal></term>
+
+    <listitem>
+      <para>
+        Sends a synchronisation point without ending the ongoing pipeline
+        and flushing the buffer. Needs an ongoing pipeline.
+     </para>
+    </listitem>
+   </varlistentry>
+
   </variablelist>
  </refsect2>
 

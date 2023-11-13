@@ -814,6 +814,23 @@ $node->pgbench(
 }
 	});
 
+# Working \startpipeline with \syncpipeline
+$node->pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[ qr{type: .*/001_pgbench_pipeline_sync}, qr{actually processed: 1/1} ],
+	[],
+	'working \startpipeline with \syncpipeline',
+	{
+		'001_pgbench_pipeline_sync' => q{
+-- test startpipeline
+\startpipeline
+select 1;
+\syncpipeline
+\endpipeline
+}
+	});
+
 # Working \startpipeline in prepared query mode
 $node->pgbench(
 	'-t 1 -n -M prepared',
