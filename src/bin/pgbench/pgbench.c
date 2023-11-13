@@ -4447,12 +4447,12 @@ executeMetaCommand(CState *st, pg_time_usec_t *now)
 	{
 		if (PQpipelineStatus(st->con) != PQ_PIPELINE_ON)
 		{
-			commandFailed(st, "endpipeline", "not in pipeline mode");
+			commandFailed(st, "syncpipeline", "not in pipeline mode");
 			return CSTATE_ABORTED;
 		}
 		if (PQsendPipelineSync(st->con) == 0)
 		{
-			commandFailed(st, "endpipeline", "failed to send a pipeline sync");
+			commandFailed(st, "syncpipeline", "failed to send a pipeline sync");
 			return CSTATE_ABORTED;
 		}
 		st->num_syncs++;
