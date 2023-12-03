@@ -124,6 +124,9 @@ extern PGDLLIMPORT bool SSLPreferServerCiphers;
 extern PGDLLIMPORT int ssl_min_protocol_version;
 extern PGDLLIMPORT int ssl_max_protocol_version;
 
+extern PGDLLIMPORT int64 pgReadBytes;
+extern PGDLLIMPORT int64 pgWriteBytes;
+
 enum ssl_protocol_versions
 {
 	PG_TLS_ANY = 0,

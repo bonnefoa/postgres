@@ -61,6 +61,9 @@ bool		SSLPreferServerCiphers;
 int			ssl_min_protocol_version = PG_TLS1_2_VERSION;
 int			ssl_max_protocol_version = PG_TLS_ANY;
 
+int64 		pgReadBytes;
+int64 		pgWriteBytes;
+
 /* ------------------------------------------------------------ */
 /*			 Procedures common to all secure sessions			*/
 /* ------------------------------------------------------------ */
@@ -247,6 +250,7 @@ secure_raw_read(Port *port, void *ptr, size_t len)
 	pgwin32_noblock = false;
 #endif
 
+	pgReadBytes += n;
 	return n;
 }
 
@@ -339,5 +343,6 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
 	pgwin32_noblock = false;
 #endif
 
+	pgWriteBytes += n;
 	return n;
 }
