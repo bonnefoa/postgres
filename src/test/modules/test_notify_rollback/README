@@ -1,0 +1,5 @@
+This module tests sending an async notification in a process utility hook.
+Async notifications are sent at commit time. However, a rollback statement
+after a failed transaction won't go through CommitTransaction and won't send
+queued notifications. It will still go through AtCleanup_Memory, resetting
+context.

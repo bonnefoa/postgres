@@ -1652,15 +1652,15 @@ SignalBackends(void)
 }
 
 /*
- * AtAbort_Notify
+ * AtCleanup_Notify
  *
- *	This is called at transaction abort.
+ *	This is called at transaction cleanup.
  *
  *	Gets rid of pending actions and outbound notifies that we would have
  *	executed if the transaction got committed.
  */
 void
-AtAbort_Notify(void)
+AtCleanup_Notify(void)
 {
 	/*
 	 * If we LISTEN but then roll back the transaction after PreCommit_Notify,
@@ -1670,7 +1670,7 @@ AtAbort_Notify(void)
 	if (amRegisteredListener && listenChannels == NIL)
 		asyncQueueUnregister();
 
-	/* And clean up */
+	/* Clean up */
 	ClearPendingActionsAndNotifies();
 }
 

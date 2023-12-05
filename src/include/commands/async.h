@@ -40,7 +40,7 @@ extern void Async_UnlistenAll(void);
 /* perform (or cancel) outbound notify processing at transaction commit */
 extern void PreCommit_Notify(void);
 extern void AtCommit_Notify(void);
-extern void AtAbort_Notify(void);
+extern void AtCleanup_Notify(void);
 extern void AtSubCommit_Notify(void);
 extern void AtSubAbort_Notify(void);
 extern void AtPrepare_Notify(void);
