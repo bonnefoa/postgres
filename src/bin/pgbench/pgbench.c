@@ -3766,7 +3766,13 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 				/* Transition to script end processing if done */
 				if (command == NULL)
 				{
-					st->state = CSTATE_END_TX;
+					if (PQpipelineStatus(st->con) != PQ_PIPELINE_OFF)
+					{
+						pg_log_error("client %d aborted: end of script reached without closing the ongoing pipeline",
+									 st->id);
+						st->state = CSTATE_ABORTED;
+					} else
+						st->state = CSTATE_END_TX;
 					break;
 				}
 
