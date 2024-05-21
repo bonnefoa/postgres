@@ -283,6 +283,333 @@ planner(Query *parse, const char *query_string, int cursorOptions,
 	return result;
 }
 
+
+static PlannedStmt *
+process_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, PlannerGlobal *glob, int cursorOptions)
+{
+	PlannedStmt *result;
+	ListCell   *lp,
+			   *lr;
+
+	/*
+	 * If creating a plan for a scrollable cursor, make sure it can run
+	 * backwards on demand.  Add a Material node at the top at need.
+	 */
+	if (cursorOptions & CURSOR_OPT_SCROLL)
+	{
+		if (!ExecSupportsBackwardScan(plan))
+			plan = materialize_finished_plan(plan);
+	}
+
+	/*
+	 * Optionally add a Gather node for testing purposes, provided this is
+	 * actually a safe thing to do.
+	 *
+	 * We can add Gather even when top_plan has parallel-safe initPlans, but
+	 * then we have to move the initPlans to the Gather node because of
+	 * SS_finalize_plan's limitations.  That would cause cosmetic breakage of
+	 * regression tests when debug_parallel_query = regress, because initPlans
+	 * that would normally appear on the top_plan move to the Gather, causing
+	 * them to disappear from EXPLAIN output.  That doesn't seem worth kluging
+	 * EXPLAIN to hide, so skip it when debug_parallel_query = regress.
+	 */
+	if (debug_parallel_query != DEBUG_PARALLEL_OFF &&
+		plan->parallel_safe &&
+		(plan->initPlan == NIL ||
+		 debug_parallel_query != DEBUG_PARALLEL_REGRESS))
+	{
+		Gather	   *gather = makeNode(Gather);
+		Cost		initplan_cost;
+		bool		unsafe_initplans;
+
+		gather->plan.targetlist = plan->targetlist;
+		gather->plan.qual = NIL;
+		gather->plan.lefttree = plan;
+		gather->plan.righttree = NULL;
+		gather->num_workers = 1;
+		gather->single_copy = true;
+		gather->invisible = (debug_parallel_query == DEBUG_PARALLEL_REGRESS);
+
+		/* Transfer any initPlans to the new top node */
+		gather->plan.initPlan = plan->initPlan;
+		plan->initPlan = NIL;
+
+		/*
+		 * Since this Gather has no parallel-aware descendants to signal to,
+		 * we don't need a rescan Param.
+		 */
+		gather->rescan_param = -1;
+
+		/*
+		 * Ideally we'd use cost_gather here, but setting up dummy path data
+		 * to satisfy it doesn't seem much cleaner than knowing what it does.
+		 */
+		gather->plan.startup_cost = plan->startup_cost +
+			parallel_setup_cost;
+		gather->plan.total_cost = plan->total_cost +
+			parallel_setup_cost + parallel_tuple_cost * plan->plan_rows;
+		gather->plan.plan_rows = plan->plan_rows;
+		gather->plan.plan_width = plan->plan_width;
+		gather->plan.parallel_aware = false;
+		gather->plan.parallel_safe = false;
+
+		/*
+		 * Delete the initplans' cost from plan.  We needn't add it to the
+		 * Gather node, since the above coding already included it there.
+		 */
+		SS_compute_initplan_cost(gather->plan.initPlan,
+								 &initplan_cost, &unsafe_initplans);
+		plan->startup_cost -= initplan_cost;
+		plan->total_cost -= initplan_cost;
+
+		/* use parallel mode for parallel plans. */
+		root->glob->parallelModeNeeded = true;
+
+		plan = &gather->plan;
+	}
+
+	/*
+	 * If any Params were generated, run through the plan tree and compute
+	 * each plan node's extParam/allParam sets.  Ideally we'd merge this into
+	 * set_plan_references' tree traversal, but for now it has to be separate
+	 * because we need to visit subplans before not after main plan.
+	 */
+	if (glob->paramExecTypes != NIL)
+	{
+		Assert(list_length(glob->subplans) == list_length(glob->subroots));
+		forboth(lp, glob->subplans, lr, glob->subroots)
+		{
+			Plan	   *subplan = (Plan *) lfirst(lp);
+			PlannerInfo *subroot = lfirst_node(PlannerInfo, lr);
+
+			SS_finalize_plan(subroot, subplan);
+		}
+		SS_finalize_plan(root, plan);
+	}
+
+	/* final cleanup of the plan */
+	Assert(glob->finalrtable == NIL);
+	Assert(glob->finalrteperminfos == NIL);
+	Assert(glob->finalrowmarks == NIL);
+	Assert(glob->resultRelations == NIL);
+	Assert(glob->appendRelations == NIL);
+	plan = set_plan_references(root, plan);
+	/* ... and the subplans (both regular subplans and initplans) */
+	Assert(list_length(glob->subplans) == list_length(glob->subroots));
+	forboth(lp, glob->subplans, lr, glob->subroots)
+	{
+		Plan	   *subplan = (Plan *) lfirst(lp);
+		PlannerInfo *subroot = lfirst_node(PlannerInfo, lr);
+
+		lfirst(lp) = set_plan_references(subroot, subplan);
+	}
+
+	/* build the PlannedStmt result */
+	result = makeNode(PlannedStmt);
+
+	result->commandType = parse->commandType;
+	result->queryId = parse->queryId;
+	result->hasReturning = (parse->returningList != NIL);
+	result->hasModifyingCTE = parse->hasModifyingCTE;
+	result->canSetTag = parse->canSetTag;
+	result->transientPlan = glob->transientPlan;
+	result->dependsOnRole = glob->dependsOnRole;
+	result->parallelModeNeeded = glob->parallelModeNeeded;
+	result->planTree = plan;
+	result->rtable = glob->finalrtable;
+	result->permInfos = glob->finalrteperminfos;
+	result->resultRelations = glob->resultRelations;
+	result->appendRelations = glob->appendRelations;
+	result->subplans = glob->subplans;
+	result->rewindPlanIDs = glob->rewindPlanIDs;
+	result->rowMarks = glob->finalrowmarks;
+	result->relationOids = glob->relationOids;
+	result->invalItems = glob->invalItems;
+	result->paramExecTypes = glob->paramExecTypes;
+	/* utilityStmt should be null, but we might as well copy it */
+	result->utilityStmt = parse->utilityStmt;
+	result->stmt_location = parse->stmt_location;
+	result->stmt_len = parse->stmt_len;
+
+	result->jitFlags = PGJIT_NONE;
+	if (jit_enabled && jit_above_cost >= 0 &&
+		plan->total_cost > jit_above_cost)
+	{
+		result->jitFlags |= PGJIT_PERFORM;
+
+		/*
+		 * Decide how much effort should be put into generating better code.
+		 */
+		if (jit_optimize_above_cost >= 0 &&
+			plan->total_cost > jit_optimize_above_cost)
+			result->jitFlags |= PGJIT_OPT3;
+		if (jit_inline_above_cost >= 0 &&
+			plan->total_cost > jit_inline_above_cost)
+			result->jitFlags |= PGJIT_INLINE;
+
+		/*
+		 * Decide which operations should be JITed.
+		 */
+		if (jit_expressions)
+			result->jitFlags |= PGJIT_EXPR;
+		if (jit_tuple_deforming)
+			result->jitFlags |= PGJIT_DEFORM;
+	}
+
+	if (glob->partition_directory != NULL)
+		DestroyPartitionDirectory(glob->partition_directory);
+
+	return result;
+}
+
+List *
+standard_planner_all_plans(Query *parse, const char *query_string, int cursorOptions,
+				 ParamListInfo boundParams)
+{
+	List *result = NULL;
+	PlannerGlobal *base_glob;
+	double		tuple_fraction;
+	PlannerInfo *root;
+	RelOptInfo *final_rel;
+	ListCell   *lp;
+
+	/*
+	 * Set up global state for this planner invocation.  This data is needed
+	 * across all levels of sub-Query that might exist in the given command,
+	 * so we keep it in a separate struct that's linked to by each per-Query
+	 * PlannerInfo.
+	 */
+	base_glob = makeNode(PlannerGlobal);
+
+	base_glob->boundParams = boundParams;
+	base_glob->subplans = NIL;
+	base_glob->subpaths = NIL;
+	base_glob->subroots = NIL;
+	base_glob->rewindPlanIDs = NULL;
+	base_glob->finalrtable = NIL;
+	base_glob->finalrteperminfos = NIL;
+	base_glob->finalrowmarks = NIL;
+	base_glob->resultRelations = NIL;
+	base_glob->appendRelations = NIL;
+	base_glob->relationOids = NIL;
+	base_glob->invalItems = NIL;
+	base_glob->paramExecTypes = NIL;
+	base_glob->lastPHId = 0;
+	base_glob->lastRowMarkId = 0;
+	base_glob->lastPlanNodeId = 0;
+	base_glob->transientPlan = false;
+	base_glob->dependsOnRole = false;
+
+	/*
+	 * Assess whether it's feasible to use parallel mode for this query. We
+	 * can't do this in a standalone backend, or if the command will try to
+	 * modify any data, or if this is a cursor operation, or if GUCs are set
+	 * to values that don't permit parallelism, or if parallel-unsafe
+	 * functions are present in the query tree.
+	 *
+	 * (Note that we do allow CREATE TABLE AS, SELECT INTO, and CREATE
+	 * MATERIALIZED VIEW to use parallel plans, but this is safe only because
+	 * the command is writing into a completely new table which workers won't
+	 * be able to see.  If the workers could see the table, the fact that
+	 * group locking would cause them to ignore the leader's heavyweight GIN
+	 * page locks would make this unsafe.  We'll have to fix that somehow if
+	 * we want to allow parallel inserts in general; updates and deletes have
+	 * additional problems especially around combo CIDs.)
+	 *
+	 * For now, we don't try to use parallel mode if we're running inside a
+	 * parallel worker.  We might eventually be able to relax this
+	 * restriction, but for now it seems best not to have parallel workers
+	 * trying to create their own parallel workers.
+	 */
+	if ((cursorOptions & CURSOR_OPT_PARALLEL_OK) != 0 &&
+		IsUnderPostmaster &&
+		parse->commandType == CMD_SELECT &&
+		!parse->hasModifyingCTE &&
+		max_parallel_workers_per_gather > 0 &&
+		!IsParallelWorker())
+	{
+		/* all the cheap tests pass, so scan the query tree */
+		base_glob->maxParallelHazard = max_parallel_hazard(parse);
+		base_glob->parallelModeOK = (base_glob->maxParallelHazard != PROPARALLEL_UNSAFE);
+	}
+	else
+	{
+		/* skip the query tree scan, just assume it's unsafe */
+		base_glob->maxParallelHazard = PROPARALLEL_UNSAFE;
+		base_glob->parallelModeOK = false;
+	}
+
+	/*
+	 * glob->parallelModeNeeded is normally set to false here and changed to
+	 * true during plan creation if a Gather or Gather Merge plan is actually
+	 * created (cf. create_gather_plan, create_gather_merge_plan).
+	 *
+	 * However, if debug_parallel_query = on or debug_parallel_query =
+	 * regress, then we impose parallel mode whenever it's safe to do so, even
+	 * if the final plan doesn't use parallelism.  It's not safe to do so if
+	 * the query contains anything parallel-unsafe; parallelModeOK will be
+	 * false in that case.  Note that parallelModeOK can't change after this
+	 * point. Otherwise, everything in the query is either parallel-safe or
+	 * parallel-restricted, and in either case it should be OK to impose
+	 * parallel-mode restrictions.  If that ends up breaking something, then
+	 * either some function the user included in the query is incorrectly
+	 * labeled as parallel-safe or parallel-restricted when in reality it's
+	 * parallel-unsafe, or else the query planner itself has a bug.
+	 */
+	base_glob->parallelModeNeeded = base_glob->parallelModeOK &&
+		(debug_parallel_query != DEBUG_PARALLEL_OFF);
+
+	/* Determine what fraction of the plan is likely to be scanned */
+	if (cursorOptions & CURSOR_OPT_FAST_PLAN)
+	{
+		/*
+		 * We have no real idea how many tuples the user will ultimately FETCH
+		 * from a cursor, but it is often the case that he doesn't want 'em
+		 * all, or would prefer a fast-start plan anyway so that he can
+		 * process some of the tuples sooner.  Use a GUC parameter to decide
+		 * what fraction to optimize for.
+		 */
+		tuple_fraction = cursor_tuple_fraction;
+
+		/*
+		 * We document cursor_tuple_fraction as simply being a fraction, which
+		 * means the edge cases 0 and 1 have to be treated specially here.  We
+		 * convert 1 to 0 ("all the tuples") and 0 to a very small fraction.
+		 */
+		if (tuple_fraction >= 1.0)
+			tuple_fraction = 0.0;
+		else if (tuple_fraction <= 0.0)
+			tuple_fraction = 1e-10;
+	}
+	else
+	{
+		/* Default assumption is we need all the tuples */
+		tuple_fraction = 0.0;
+	}
+
+	/* primary planning entry point (may recurse for subqueries) */
+	root = subquery_planner(base_glob, parse, NULL, false, tuple_fraction, NULL);
+
+	/* Select best Path and turn it into a Plan */
+	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
+	foreach(lp, final_rel->pathlist)
+	{
+		Plan	   *plan;
+		PlannedStmt *planned_stmt;
+		Path	   *path = (Path *) lfirst(lp);
+		PlannerGlobal *glob;
+		glob = makeNode(PlannerGlobal);
+		*glob = *base_glob;
+		plan = create_plan(root, path);
+		root->glob = glob;
+		planned_stmt = process_planned_stmt(parse, root, plan, glob, cursorOptions);
+		result = lcons(planned_stmt, result);
+	}
+
+	return result;
+}
+
+
 PlannedStmt *
 standard_planner(Query *parse, const char *query_string, int cursorOptions,
 				 ParamListInfo boundParams)

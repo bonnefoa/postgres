@@ -456,7 +456,9 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 						 const char *queryString, ParamListInfo params,
 						 QueryEnvironment *queryEnv)
 {
-	PlannedStmt *plan;
+	ListCell   *plan_list;
+	List *plans;
+	int i = 0;
 	instr_time	planstart,
 				planduration;
 	BufferUsage bufusage_start,
@@ -486,7 +488,8 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 	INSTR_TIME_SET_CURRENT(planstart);
 
 	/* plan the query */
-	plan = pg_plan_query(query, queryString, cursorOptions, params);
+	// plan = pg_plan_query(query, queryString, cursorOptions, params);
+	plans = pg_all_plan_query(query, queryString, cursorOptions, params);
 
 	INSTR_TIME_SET_CURRENT(planduration);
 	INSTR_TIME_SUBTRACT(planduration, planstart);
@@ -504,10 +507,31 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 		BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
 	}
 
-	/* run it (if needed) and produce output */
-	ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
-				   &planduration, (es->buffers ? &bufusage : NULL),
-				   es->memory ? &mem_counters : NULL);
+	foreach(plan_list, plans)
+	{
+		/* run it (if needed) and produce output */
+		char *plan_name;
+		PlannedStmt	   *plan = lfirst(plan_list);
+		i++;
+		plan_name = psprintf("Plan %d", i);
+
+		ExplainOpenGroup(plan_name, NULL, true, es);
+		if (es->format == EXPLAIN_FORMAT_TEXT)
+		{
+			ExplainIndentText(es);
+			appendStringInfoString(es->str, plan_name);
+			appendStringInfoString(es->str, "\n");
+			es->indent++;
+		}
+
+		ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
+				 &planduration, (es->buffers ? &bufusage : NULL),
+				 es->memory ? &mem_counters : NULL);
+
+		ExplainCloseGroup(plan_name, NULL, true, es);
+		if (es->format == EXPLAIN_FORMAT_TEXT)
+			es->indent--;
+	}
 }
 
 /*

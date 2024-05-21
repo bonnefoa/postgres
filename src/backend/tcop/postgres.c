@@ -877,6 +877,26 @@ pg_rewrite_query(Query *query)
 	return querytree_list;
 }
 
+List *
+pg_all_plan_query(Query *querytree, const char *query_string, int cursorOptions,
+			  ParamListInfo boundParams)
+{
+	List *plans;
+
+	/* Utility commands have no plans. */
+	if (querytree->commandType == CMD_UTILITY)
+		return NULL;
+
+	/* Planner must have a snapshot in case it calls user-defined functions. */
+	Assert(ActiveSnapshotSet());
+
+	/* call the optimizer */
+	plans = standard_planner_all_plans(querytree, query_string, cursorOptions, boundParams);
+
+	return plans;
+}
+
+
 
 /*
  * Generate a plan for a single already-rewritten query.
