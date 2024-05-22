@@ -433,6 +433,19 @@ add_path(PlannerInfo *root, RelOptInfo *parent_rel, Path *new_path)
 	/* Pretend parameterized paths have no pathkeys, per comment above */
 	new_path_pathkeys = new_path->param_info ? NIL : new_path->pathkeys;
 
+	if (root->glob->keepAllCandidates)
+	{
+		foreach(p1, parent_rel->pathlist)
+		{
+			Path	   *old_path = (Path *) lfirst(p1);
+			if (new_path->total_cost >= old_path->total_cost)
+				insert_at = foreach_current_index(p1) + 1;
+		}
+		parent_rel->pathlist =
+			list_insert_nth(parent_rel->pathlist, insert_at, new_path);
+		return;
+	}
+
 	/*
 	 * Loop to check proposed new path against old paths.  Note it is possible
 	 * for more than one old path to be tossed out because new_path dominates
@@ -758,6 +771,19 @@ add_partial_path(PlannerInfo* root, RelOptInfo *parent_rel, Path *new_path)
 
 	/* Relation should be OK for parallelism, too. */
 	Assert(parent_rel->consider_parallel);
+
+	if (root->glob->keepAllCandidates)
+	{
+		foreach(p1, parent_rel->partial_pathlist)
+		{
+			Path	   *old_path = (Path *) lfirst(p1);
+			if (new_path->total_cost >= old_path->total_cost)
+				insert_at = foreach_current_index(p1) + 1;
+		}
+		parent_rel->partial_pathlist =
+			list_insert_nth(parent_rel->partial_pathlist, insert_at, new_path);
+		return;
+	}
 
 	/*
 	 * As in add_path, throw out any paths which are dominated by the new
