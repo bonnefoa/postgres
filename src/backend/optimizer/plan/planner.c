@@ -285,11 +285,12 @@ planner(Query *parse, const char *query_string, int cursorOptions,
 
 
 static PlannedStmt *
-process_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, PlannerGlobal *glob, int cursorOptions)
+process_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, int cursorOptions)
 {
 	PlannedStmt *result;
 	ListCell   *lp,
 			   *lr;
+	PlannerGlobal *glob = root->glob;
 
 	/*
 	 * If creating a plan for a scrollable cursor, make sure it can run
@@ -499,6 +500,7 @@ standard_planner_all_plans(Query *parse, const char *query_string, int cursorOpt
 	base_glob->lastPlanNodeId = 0;
 	base_glob->transientPlan = false;
 	base_glob->dependsOnRole = false;
+	base_glob->keepAllCandidates = true;
 
 	/*
 	 * Assess whether it's feasible to use parallel mode for this query. We
@@ -588,21 +590,40 @@ standard_planner_all_plans(Query *parse, const char *query_string, int cursorOpt
 	}
 
 	/* primary planning entry point (may recurse for subqueries) */
-	root = subquery_planner(base_glob, parse, NULL, false, tuple_fraction, NULL);
+	root = subquery_planner(base_glob, parse, NULL, false, tuple_fraction);
 
 	/* Select best Path and turn it into a Plan */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
+
 	foreach(lp, final_rel->pathlist)
 	{
 		Plan	   *plan;
 		PlannedStmt *planned_stmt;
 		Path	   *path = (Path *) lfirst(lp);
 		PlannerGlobal *glob;
+		ListCell   *lr;
+		int rti;
+
 		glob = makeNode(PlannerGlobal);
+		Assert(base_glob->finalrtable == NIL);
 		*glob = *base_glob;
 		plan = create_plan(root, path);
+
+		foreach(lr, glob->subroots)
+		{
+			PlannerInfo *subroot = lfirst_node(PlannerInfo, lr);
+			subroot->glob = glob;
+		}
+
 		root->glob = glob;
-		planned_stmt = process_planned_stmt(parse, root, plan, glob, cursorOptions);
+		for (rti = 1; rti < root->simple_rel_array_size; rti++)
+		{
+			RelOptInfo *brel = root->simple_rel_array[rti];
+			if (brel && brel->subroot)
+				brel->subroot->glob = glob;
+		}
+
+		planned_stmt = process_planned_stmt(parse, root, plan, cursorOptions);
 		result = lcons(planned_stmt, result);
 	}
 
@@ -650,6 +671,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	glob->lastPlanNodeId = 0;
 	glob->transientPlan = false;
 	glob->dependsOnRole = false;
+	glob->keepAllCandidates = false;
 
 	/*
 	 * Assess whether it's feasible to use parallel mode for this query. We
@@ -2319,7 +2341,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 
 		/* And shove it into final_rel */
-		add_path(final_rel, path);
+		add_path(root, final_rel, path);
 	}
 
 	/*
@@ -2334,7 +2356,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		{
 			Path	   *partial_path = (Path *) lfirst(lc);
 
-			add_partial_path(final_rel, partial_path);
+			add_partial_path(root, final_rel, partial_path);
 		}
 	}
 
@@ -4213,7 +4235,7 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 									 (List *) parse->havingQual);
 	}
 
-	add_path(grouped_rel, path);
+	add_path(root, grouped_rel, path);
 }
 
 /*
@@ -4534,7 +4556,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 			strat = AGG_MIXED;
 		}
 
-		add_path(grouped_rel, (Path *)
+		add_path(root, grouped_rel, (Path *)
 				 create_groupingsets_path(root,
 										  grouped_rel,
 										  path,
@@ -4692,7 +4714,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 
 		if (rollups)
 		{
-			add_path(grouped_rel, (Path *)
+			add_path(root, grouped_rel, (Path *)
 					 create_groupingsets_path(root,
 											  grouped_rel,
 											  path,
@@ -4707,7 +4729,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 	 * Now try the simple sorted case.
 	 */
 	if (!gd->unsortable_sets)
-		add_path(grouped_rel, (Path *)
+		add_path(root, grouped_rel, (Path *)
 				 create_groupingsets_path(root,
 										  grouped_rel,
 										  path,
@@ -4973,7 +4995,7 @@ create_one_window_path(PlannerInfo *root,
 								  topwindow ? topqual : NIL, topwindow);
 	}
 
-	add_path(window_rel, path);
+	add_path(root, window_rel, path);
 }
 
 /*
@@ -5177,7 +5199,7 @@ create_partial_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 				 * of these could be done, but does not seem worth troubling
 				 * over.
 				 */
-				add_partial_path(partial_distinct_rel, (Path *)
+				add_partial_path(root, partial_distinct_rel, (Path *)
 								 create_limit_path(root, partial_distinct_rel,
 												   sorted_path,
 												   NULL,
@@ -5187,7 +5209,7 @@ create_partial_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 			}
 			else
 			{
-				add_partial_path(partial_distinct_rel, (Path *)
+				add_partial_path(root, partial_distinct_rel, (Path *)
 								 create_upper_unique_path(root, partial_distinct_rel,
 														  sorted_path,
 														  list_length(root->distinct_pathkeys),
@@ -5204,7 +5226,7 @@ create_partial_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 */
 	if (enable_hashagg && grouping_is_hashable(root->processed_distinctClause))
 	{
-		add_partial_path(partial_distinct_rel, (Path *)
+		add_partial_path(root, partial_distinct_rel, (Path *)
 						 create_agg_path(root,
 										 partial_distinct_rel,
 										 cheapest_partial_path,
@@ -5392,14 +5414,14 @@ create_final_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 				 * up with a duplicate LimitPath in the final plan. That does
 				 * not seem worth troubling over too much.
 				 */
-				add_path(distinct_rel, (Path *)
+				add_path(root, distinct_rel, (Path *)
 						 create_limit_path(root, distinct_rel, sorted_path,
 										   NULL, limitCount,
 										   LIMIT_OPTION_COUNT, 0, 1));
 			}
 			else
 			{
-				add_path(distinct_rel, (Path *)
+				add_path(root, distinct_rel, (Path *)
 						 create_upper_unique_path(root, distinct_rel,
 												  sorted_path,
 												  list_length(root->distinct_pathkeys),
@@ -5430,7 +5452,7 @@ create_final_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	if (allow_hash && grouping_is_hashable(root->processed_distinctClause))
 	{
 		/* Generate hashed aggregate path --- no sort needed */
-		add_path(distinct_rel, (Path *)
+		add_path(root, distinct_rel, (Path *)
 				 create_agg_path(root,
 								 distinct_rel,
 								 cheapest_input_path,
@@ -5484,6 +5506,8 @@ create_ordered_paths(PlannerInfo *root,
 	 */
 	if (input_rel->consider_parallel && target_parallel_safe)
 		ordered_rel->consider_parallel = true;
+
+	// ordered_rel->rows = input_rel->rows;
 
 	/*
 	 * If the input rel belongs to a single FDW, so does the ordered_rel.
@@ -5543,7 +5567,7 @@ create_ordered_paths(PlannerInfo *root,
 			sorted_path = apply_projection_to_path(root, ordered_rel,
 												   sorted_path, target);
 
-		add_path(ordered_rel, sorted_path);
+		add_path(root, ordered_rel, sorted_path);
 	}
 
 	/*
@@ -5622,7 +5646,7 @@ create_ordered_paths(PlannerInfo *root,
 				sorted_path = apply_projection_to_path(root, ordered_rel,
 													   sorted_path, target);
 
-			add_path(ordered_rel, sorted_path);
+			add_path(root, ordered_rel, sorted_path);
 		}
 	}
 
@@ -7262,7 +7286,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 					 * We have aggregation, possibly with plain GROUP BY. Make
 					 * an AggPath.
 					 */
-					add_path(grouped_rel, (Path *)
+					add_path(root, grouped_rel, (Path *)
 							 create_agg_path(root,
 											 grouped_rel,
 											 path,
@@ -7280,7 +7304,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 					 * We have GROUP BY without aggregation or grouping sets.
 					 * Make a GroupPath.
 					 */
-					add_path(grouped_rel, (Path *)
+					add_path(root, grouped_rel, (Path *)
 							 create_group_path(root,
 											   grouped_rel,
 											   path,
@@ -7332,7 +7356,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 						continue;
 
 					if (parse->hasAggs)
-						add_path(grouped_rel, (Path *)
+						add_path(root, grouped_rel, (Path *)
 								 create_agg_path(root,
 												 grouped_rel,
 												 path,
@@ -7344,7 +7368,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 												 agg_final_costs,
 												 dNumGroups));
 					else
-						add_path(grouped_rel, (Path *)
+						add_path(root, grouped_rel, (Path *)
 								 create_group_path(root,
 												   grouped_rel,
 												   path,
@@ -7374,7 +7398,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 			 * Generate a HashAgg Path.  We just need an Agg over the
 			 * cheapest-total input path, since input order won't matter.
 			 */
-			add_path(grouped_rel, (Path *)
+			add_path(root, grouped_rel, (Path *)
 					 create_agg_path(root, grouped_rel,
 									 cheapest_path,
 									 grouped_rel->reltarget,
@@ -7394,7 +7418,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 		{
 			Path	   *path = partially_grouped_rel->cheapest_total_path;
 
-			add_path(grouped_rel, (Path *)
+			add_path(root, grouped_rel, (Path *)
 					 create_agg_path(root,
 									 grouped_rel,
 									 path,
@@ -7583,7 +7607,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 					continue;
 
 				if (parse->hasAggs)
-					add_path(partially_grouped_rel, (Path *)
+					add_path(root, partially_grouped_rel, (Path *)
 							 create_agg_path(root,
 											 partially_grouped_rel,
 											 path,
@@ -7595,7 +7619,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 											 agg_partial_costs,
 											 dNumPartialGroups));
 				else
-					add_path(partially_grouped_rel, (Path *)
+					add_path(root, partially_grouped_rel, (Path *)
 							 create_group_path(root,
 											   partially_grouped_rel,
 											   path,
@@ -7640,7 +7664,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 					continue;
 
 				if (parse->hasAggs)
-					add_partial_path(partially_grouped_rel, (Path *)
+					add_partial_path(root, partially_grouped_rel, (Path *)
 									 create_agg_path(root,
 													 partially_grouped_rel,
 													 path,
@@ -7652,7 +7676,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 													 agg_partial_costs,
 													 dNumPartialPartialGroups));
 				else
-					add_partial_path(partially_grouped_rel, (Path *)
+					add_partial_path(root, partially_grouped_rel, (Path *)
 									 create_group_path(root,
 													   partially_grouped_rel,
 													   path,
@@ -7671,7 +7695,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 		/* Checked above */
 		Assert(parse->hasAggs || parse->groupClause);
 
-		add_path(partially_grouped_rel, (Path *)
+		add_path(root, partially_grouped_rel, (Path *)
 				 create_agg_path(root,
 								 partially_grouped_rel,
 								 cheapest_total_path,
@@ -7689,7 +7713,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 	 */
 	if (can_hash && cheapest_partial_path != NULL)
 	{
-		add_partial_path(partially_grouped_rel, (Path *)
+		add_partial_path(root, partially_grouped_rel, (Path *)
 						 create_agg_path(root,
 										 partially_grouped_rel,
 										 cheapest_partial_path,
@@ -7808,7 +7832,7 @@ gather_grouping_paths(PlannerInfo *root, RelOptInfo *rel)
 									 NULL,
 									 &total_groups);
 
-		add_path(rel, path);
+		add_path(root, rel, path);
 	}
 }
 

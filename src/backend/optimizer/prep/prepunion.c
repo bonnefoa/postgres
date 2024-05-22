@@ -486,7 +486,7 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 											   root->wt_param_id,
 											   dNumGroups);
 
-	add_path(result_rel, path);
+	add_path(root, result_rel, path);
 	postprocess_setop_rel(root, result_rel);
 	return result_rel;
 }
@@ -831,8 +831,22 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 	 * Append the child results together using the cheapest paths from each
 	 * union child.
 	 */
+<<<<<<< HEAD
 	apath = (Path *) create_append_path(root, result_rel, cheapest_pathlist,
 										NIL, NIL, NULL, 0, false, -1);
+=======
+	path = (Path *) create_append_path(root, result_rel, pathlist, NIL,
+									   NIL, NULL, 0, false, -1);
+
+	/*
+	 * For UNION ALL, we just need the Append path.  For UNION, need to add
+	 * node(s) to remove duplicates.
+	 */
+	if (!op->all)
+		path = make_union_unique(op, path, tlist, root);
+
+	add_path(root, result_rel, path);
+>>>>>>> 26e81de2fa (Propagate planner info)
 
 	/*
 	 * Estimate number of groups.  For now we just assume the output is unique
@@ -883,6 +897,12 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 		gpath = (Path *)
 			create_gather_path(root, result_rel, papath,
 							   result_rel->reltarget, NULL, NULL);
+<<<<<<< HEAD
+=======
+		if (!op->all)
+			ppath = make_union_unique(op, ppath, tlist, root);
+		add_path(root, result_rel, ppath);
+>>>>>>> 26e81de2fa (Propagate planner info)
 	}
 
 	if (!op->all)
@@ -1188,7 +1208,7 @@ generate_nonunion_paths(SetOperationStmt *op, PlannerInfo *root,
 									  dNumOutputRows);
 
 	result_rel->rows = path->rows;
-	add_path(result_rel, path);
+	add_path(root, result_rel, path);
 	return result_rel;
 }
 
