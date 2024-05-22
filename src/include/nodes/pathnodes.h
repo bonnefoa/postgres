@@ -158,6 +158,9 @@ typedef struct PlannerGlobal
 	/* parallel mode actually required? */
 	bool		parallelModeNeeded;
 
+	/* do no discard more expensive plans from pathlist */
+	bool		keepAllCandidates;
+
 	/* worst PROPARALLEL hazard level */
 	char		maxParallelHazard;
 

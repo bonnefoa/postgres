@@ -55,6 +55,7 @@ typedef struct ExplainState
 	bool		memory;			/* print planner's memory usage information */
 	bool		settings;		/* print modified settings */
 	bool		generic;		/* generate a generic plan */
+	bool		all_candidates; /* print all plan candidates */
 	ExplainSerializeOption serialize;	/* serialize the query's output? */
 	ExplainFormat format;		/* output format */
 	/* state for output formatting --- not reset for each new plan tree */
