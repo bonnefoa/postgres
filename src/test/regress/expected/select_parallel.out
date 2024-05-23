@@ -1328,4 +1328,43 @@ SELECT 1 FROM tenk1_vw_sec
                  Filter: (f1 < tenk1_vw_sec.unique1)
 (9 rows)
 
+-- test estimated rows in gather nodes with different numbers of workers
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1 ORDER BY twenty;
+               QUERY PLAN               
+----------------------------------------
+ Gather Merge
+   Workers Planned: 4
+   ->  Sort
+         Sort Key: twenty
+         ->  Parallel Seq Scan on tenk1
+(5 rows)
+
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+ estimated 
+-----------
+     10000
+(1 row)
+
+set max_parallel_workers_per_gather=3;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+ estimated 
+-----------
+     10000
+(1 row)
+
+set max_parallel_workers_per_gather=2;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+ estimated 
+-----------
+     10000
+(1 row)
+
+set max_parallel_workers_per_gather=1;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+ estimated 
+-----------
+      9999
+(1 row)
+
 rollback;

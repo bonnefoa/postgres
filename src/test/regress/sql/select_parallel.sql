@@ -510,4 +510,15 @@ EXPLAIN (COSTS OFF)
 SELECT 1 FROM tenk1_vw_sec
   WHERE (SELECT sum(f1) FROM int4_tbl WHERE f1 < unique1) < 100;
 
+-- test estimated rows in gather nodes with different numbers of workers
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1 ORDER BY twenty;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+set max_parallel_workers_per_gather=3;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+set max_parallel_workers_per_gather=2;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+set max_parallel_workers_per_gather=1;
+SELECT * FROM get_estimated_rows('SELECT * FROM tenk1 ORDER BY twenty');
+
 rollback;
