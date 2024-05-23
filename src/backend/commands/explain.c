@@ -464,9 +464,9 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 						 QueryEnvironment *queryEnv)
 {
 	ListCell   *plan_list;
-	List *plans = NULL;
+	List	   *plans = NULL;
 	PlannedStmt *plan = NULL;
-	int i = 0;
+	int			i = 0;
 	instr_time	planstart,
 				planduration;
 	BufferUsage bufusage_start,
@@ -518,12 +518,14 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 	}
 
 	/* run it (if needed) and produce output */
-	if (es->all_candidates) {
+	if (es->all_candidates)
+	{
 		foreach(plan_list, plans)
 		{
 			/* run it (if needed) and produce output */
-			char *plan_name;
-			PlannedStmt	   *plan = lfirst(plan_list);
+			char	   *plan_name;
+			PlannedStmt *plan = lfirst(plan_list);
+
 			i++;
 			plan_name = psprintf("Plan %d", i);
 
@@ -537,17 +539,19 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 			}
 
 			ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
-					 &planduration, (es->buffers ? &bufusage : NULL),
-					 es->memory ? &mem_counters : NULL);
+						   &planduration, (es->buffers ? &bufusage : NULL),
+						   es->memory ? &mem_counters : NULL);
 
 			ExplainCloseGroup(plan_name, NULL, true, es);
 			if (es->format == EXPLAIN_FORMAT_TEXT)
 				es->indent--;
 		}
-	} else {
+	}
+	else
+	{
 		ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
-				 &planduration, (es->buffers ? &bufusage : NULL),
-				 es->memory ? &mem_counters : NULL);
+					   &planduration, (es->buffers ? &bufusage : NULL),
+					   es->memory ? &mem_counters : NULL);
 	}
 }
 

@@ -879,9 +879,9 @@ pg_rewrite_query(Query *query)
 
 List *
 pg_all_plan_query(Query *querytree, const char *query_string, int cursorOptions,
-			  ParamListInfo boundParams)
+				  ParamListInfo boundParams)
 {
-	List *plans;
+	List	   *plans;
 
 	/* Utility commands have no plans. */
 	if (querytree->commandType == CMD_UTILITY)
