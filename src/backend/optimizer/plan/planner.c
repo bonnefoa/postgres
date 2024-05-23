@@ -285,7 +285,7 @@ planner(Query *parse, const char *query_string, int cursorOptions,
 
 
 static PlannedStmt *
-process_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, int cursorOptions)
+create_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, int cursorOptions)
 {
 	PlannedStmt *result;
 	ListCell   *lp,
@@ -465,9 +465,9 @@ process_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, int cursorOpti
 
 List *
 standard_planner_all_plans(Query *parse, const char *query_string, int cursorOptions,
-				 ParamListInfo boundParams)
+						   ParamListInfo boundParams)
 {
-	List *result = NULL;
+	List	   *result = NULL;
 	PlannerGlobal *base_glob;
 	double		tuple_fraction;
 	PlannerInfo *root;
@@ -595,6 +595,8 @@ standard_planner_all_plans(Query *parse, const char *query_string, int cursorOpt
 	/* Select best Path and turn it into a Plan */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 
+
+
 	foreach(lp, final_rel->pathlist)
 	{
 		Plan	   *plan;
@@ -602,16 +604,22 @@ standard_planner_all_plans(Query *parse, const char *query_string, int cursorOpt
 		Path	   *path = (Path *) lfirst(lp);
 		PlannerGlobal *glob;
 		ListCell   *lr;
-		int rti;
+		int			rti;
 
+		/*
+		 * Glob will be modified by create_planned_stmt so we need to create a
+		 * copy and change all subplans and RelOptInfo to use the copy
+		 */
 		glob = makeNode(PlannerGlobal);
 		Assert(base_glob->finalrtable == NIL);
 		*glob = *base_glob;
 		plan = create_plan(root, path);
 
+		glob->subplans = copyObject(glob->subplans);
 		foreach(lr, glob->subroots)
 		{
 			PlannerInfo *subroot = lfirst_node(PlannerInfo, lr);
+
 			subroot->glob = glob;
 		}
 
@@ -619,11 +627,12 @@ standard_planner_all_plans(Query *parse, const char *query_string, int cursorOpt
 		for (rti = 1; rti < root->simple_rel_array_size; rti++)
 		{
 			RelOptInfo *brel = root->simple_rel_array[rti];
+
 			if (brel && brel->subroot)
 				brel->subroot->glob = glob;
 		}
 
-		planned_stmt = process_planned_stmt(parse, root, plan, cursorOptions);
+		planned_stmt = create_planned_stmt(parse, root, plan, cursorOptions);
 		result = lcons(planned_stmt, result);
 	}
 
