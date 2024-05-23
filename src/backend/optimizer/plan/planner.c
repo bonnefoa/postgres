@@ -2365,7 +2365,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		{
 			Path	   *partial_path = (Path *) lfirst(lc);
 
-			add_partial_path(root, final_rel, partial_path);
+			add_partial_path(final_rel, partial_path);
 		}
 	}
 
@@ -5208,7 +5208,7 @@ create_partial_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 				 * of these could be done, but does not seem worth troubling
 				 * over.
 				 */
-				add_partial_path(root, partial_distinct_rel, (Path *)
+				add_partial_path(partial_distinct_rel, (Path *)
 								 create_limit_path(root, partial_distinct_rel,
 												   sorted_path,
 												   NULL,
@@ -5218,7 +5218,7 @@ create_partial_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 			}
 			else
 			{
-				add_partial_path(root, partial_distinct_rel, (Path *)
+				add_partial_path(partial_distinct_rel, (Path *)
 								 create_upper_unique_path(root, partial_distinct_rel,
 														  sorted_path,
 														  list_length(root->distinct_pathkeys),
@@ -5235,7 +5235,7 @@ create_partial_distinct_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 */
 	if (enable_hashagg && grouping_is_hashable(root->processed_distinctClause))
 	{
-		add_partial_path(root, partial_distinct_rel, (Path *)
+		add_partial_path(partial_distinct_rel, (Path *)
 						 create_agg_path(root,
 										 partial_distinct_rel,
 										 cheapest_partial_path,
@@ -7673,7 +7673,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 					continue;
 
 				if (parse->hasAggs)
-					add_partial_path(root, partially_grouped_rel, (Path *)
+					add_partial_path(partially_grouped_rel, (Path *)
 									 create_agg_path(root,
 													 partially_grouped_rel,
 													 path,
@@ -7685,7 +7685,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 													 agg_partial_costs,
 													 dNumPartialPartialGroups));
 				else
-					add_partial_path(root, partially_grouped_rel, (Path *)
+					add_partial_path(partially_grouped_rel, (Path *)
 									 create_group_path(root,
 													   partially_grouped_rel,
 													   path,
@@ -7722,7 +7722,7 @@ create_partial_grouping_paths(PlannerInfo *root,
 	 */
 	if (can_hash && cheapest_partial_path != NULL)
 	{
-		add_partial_path(root, partially_grouped_rel, (Path *)
+		add_partial_path(partially_grouped_rel, (Path *)
 						 create_agg_path(root,
 										 partially_grouped_rel,
 										 cheapest_partial_path,

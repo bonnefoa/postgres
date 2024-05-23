@@ -996,7 +996,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 			 * parallel workers, just free it.
 			 */
 			if (ipath->path.parallel_workers > 0)
-				add_partial_path(root, rel, (Path *) ipath);
+				add_partial_path(rel, (Path *) ipath);
 			else
 				pfree(ipath);
 		}
@@ -1046,7 +1046,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 				 * using parallel workers, just free it.
 				 */
 				if (ipath->path.parallel_workers > 0)
-					add_partial_path(root, rel, (Path *) ipath);
+					add_partial_path(rel, (Path *) ipath);
 				else
 					pfree(ipath);
 			}

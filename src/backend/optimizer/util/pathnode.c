@@ -758,7 +758,7 @@ add_path_precheck(RelOptInfo *parent_rel,
  *	  referenced by partial BitmapHeapPaths.
  */
 void
-add_partial_path(PlannerInfo *root, RelOptInfo *parent_rel, Path *new_path)
+add_partial_path(RelOptInfo *parent_rel, Path *new_path)
 {
 	bool		accept_new = true;	/* unless we find a superior old path */
 	int			insert_at = 0;	/* where to insert new item */
@@ -772,20 +772,6 @@ add_partial_path(PlannerInfo *root, RelOptInfo *parent_rel, Path *new_path)
 
 	/* Relation should be OK for parallelism, too. */
 	Assert(parent_rel->consider_parallel);
-
-	if (root->glob->keepAllCandidates)
-	{
-		foreach(p1, parent_rel->partial_pathlist)
-		{
-			Path	   *old_path = (Path *) lfirst(p1);
-
-			if (new_path->total_cost >= old_path->total_cost)
-				insert_at = foreach_current_index(p1) + 1;
-		}
-		parent_rel->partial_pathlist =
-			list_insert_nth(parent_rel->partial_pathlist, insert_at, new_path);
-		return;
-	}
 
 	/*
 	 * As in add_path, throw out any paths which are dominated by the new

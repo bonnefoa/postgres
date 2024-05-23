@@ -651,7 +651,7 @@ build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
 			create_subqueryscan_path(root, rel, partial_subpath,
 									 trivial_tlist,
 									 NIL, NULL);
-		add_partial_path(root, rel, partial_path);
+		add_partial_path(rel, partial_path);
 	}
 
 	postprocess_setop_rel(root, rel);

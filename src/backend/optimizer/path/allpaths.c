@@ -803,7 +803,7 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 		return;
 
 	/* Add an unordered partial path based on a parallel sequential scan. */
-	add_partial_path(root, rel, create_seqscan_path(root, rel, NULL, parallel_workers));
+	add_partial_path(rel, create_seqscan_path(root, rel, NULL, parallel_workers));
 }
 
 /*
@@ -1549,7 +1549,7 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 		partial_rows = appendpath->path.rows;
 
 		/* Add the path. */
-		add_partial_path(root, rel, (Path *) appendpath);
+		add_partial_path(rel, (Path *) appendpath);
 	}
 
 	/*
@@ -1590,7 +1590,7 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 										pa_partial_subpaths,
 										NIL, NULL, parallel_workers, true,
 										partial_rows);
-		add_partial_path(root, rel, (Path *) appendpath);
+		add_partial_path(rel, (Path *) appendpath);
 	}
 
 	/*
@@ -1678,7 +1678,7 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 											NIL, NULL,
 											path->parallel_workers, true,
 											partial_rows);
-			add_partial_path(root, rel, (Path *) appendpath);
+			add_partial_path(rel, (Path *) appendpath);
 		}
 	}
 }
@@ -2732,7 +2732,7 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 												 make_tlist_from_pathtarget(subpath->pathtarget));
 
 			/* Generate outer path using this subpath */
-			add_partial_path(root, rel, (Path *)
+			add_partial_path(rel, (Path *)
 							 create_subqueryscan_path(root, rel, subpath,
 													  trivial_pathtarget,
 													  pathkeys,
@@ -4180,7 +4180,7 @@ create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
 	if (parallel_workers <= 0)
 		return;
 
-	add_partial_path(root, rel, (Path *) create_bitmap_heap_path(root, rel,
+	add_partial_path(rel, (Path *) create_bitmap_heap_path(root, rel,
 																 bitmapqual, rel->lateral_relids, 1.0, parallel_workers));
 }
 

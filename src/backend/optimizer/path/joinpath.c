@@ -898,7 +898,7 @@ try_partial_nestloop_path(PlannerInfo *root,
 		return;
 
 	/* Might be good enough to be worth trying, so let's try it. */
-	add_partial_path(root, joinrel, (Path *)
+	add_partial_path(joinrel, (Path *)
 					 create_nestloop_path(root,
 										  joinrel,
 										  jointype,
@@ -1071,7 +1071,7 @@ try_partial_mergejoin_path(PlannerInfo *root,
 		return;
 
 	/* Might be good enough to be worth trying, so let's try it. */
-	add_partial_path(root, joinrel, (Path *)
+	add_partial_path(joinrel, (Path *)
 					 create_mergejoin_path(root,
 										   joinrel,
 										   jointype,
@@ -1206,7 +1206,7 @@ try_partial_hashjoin_path(PlannerInfo *root,
 		return;
 
 	/* Might be good enough to be worth trying, so let's try it. */
-	add_partial_path(root, joinrel, (Path *)
+	add_partial_path(joinrel, (Path *)
 					 create_hashjoin_path(root,
 										  joinrel,
 										  jointype,
