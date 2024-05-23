@@ -438,6 +438,7 @@ add_path(PlannerInfo *root, RelOptInfo *parent_rel, Path *new_path)
 		foreach(p1, parent_rel->pathlist)
 		{
 			Path	   *old_path = (Path *) lfirst(p1);
+
 			if (new_path->total_cost >= old_path->total_cost)
 				insert_at = foreach_current_index(p1) + 1;
 		}
@@ -757,7 +758,7 @@ add_path_precheck(RelOptInfo *parent_rel,
  *	  referenced by partial BitmapHeapPaths.
  */
 void
-add_partial_path(PlannerInfo* root, RelOptInfo *parent_rel, Path *new_path)
+add_partial_path(PlannerInfo *root, RelOptInfo *parent_rel, Path *new_path)
 {
 	bool		accept_new = true;	/* unless we find a superior old path */
 	int			insert_at = 0;	/* where to insert new item */
@@ -777,6 +778,7 @@ add_partial_path(PlannerInfo* root, RelOptInfo *parent_rel, Path *new_path)
 		foreach(p1, parent_rel->partial_pathlist)
 		{
 			Path	   *old_path = (Path *) lfirst(p1);
+
 			if (new_path->total_cost >= old_path->total_cost)
 				insert_at = foreach_current_index(p1) + 1;
 		}

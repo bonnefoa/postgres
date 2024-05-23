@@ -1491,13 +1491,13 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 	 */
 	if (subpaths_valid)
 		add_path(root, rel, (Path *) create_append_path(root, rel, subpaths, NIL,
-												  NIL, NULL, 0, false,
-												  -1));
+														NIL, NULL, 0, false,
+														-1));
 
 	/* build an AppendPath for the cheap startup paths, if valid */
 	if (startup_subpaths_valid)
 		add_path(root, rel, (Path *) create_append_path(root, rel, startup_subpaths,
-												  NIL, NIL, NULL, 0, false, -1));
+														NIL, NIL, NULL, 0, false, -1));
 
 	/*
 	 * Consider an append of unordered, unparameterized partial paths.  Make
@@ -1933,57 +1933,57 @@ generate_orderedappend_paths(PlannerInfo *root, RelOptInfo *rel,
 		{
 			/* We only need Append */
 			add_path(root, rel, (Path *) create_append_path(root,
-													  rel,
-													  startup_subpaths,
-													  NIL,
-													  pathkeys,
-													  NULL,
-													  0,
-													  false,
-													  -1));
+															rel,
+															startup_subpaths,
+															NIL,
+															pathkeys,
+															NULL,
+															0,
+															false,
+															-1));
 			if (startup_neq_total)
 				add_path(root, rel, (Path *) create_append_path(root,
-														  rel,
-														  total_subpaths,
-														  NIL,
-														  pathkeys,
-														  NULL,
-														  0,
-														  false,
-														  -1));
+																rel,
+																total_subpaths,
+																NIL,
+																pathkeys,
+																NULL,
+																0,
+																false,
+																-1));
 
 			if (fractional_subpaths)
 				add_path(root, rel, (Path *) create_append_path(root,
-														  rel,
-														  fractional_subpaths,
-														  NIL,
-														  pathkeys,
-														  NULL,
-														  0,
-														  false,
-														  -1));
+																rel,
+																fractional_subpaths,
+																NIL,
+																pathkeys,
+																NULL,
+																0,
+																false,
+																-1));
 		}
 		else
 		{
 			/* We need MergeAppend */
 			add_path(root, rel, (Path *) create_merge_append_path(root,
-															rel,
-															startup_subpaths,
-															pathkeys,
-															NULL));
+																  rel,
+																  startup_subpaths,
+																  pathkeys,
+																  NULL));
 			if (startup_neq_total)
 				add_path(root, rel, (Path *) create_merge_append_path(root,
-																rel,
-																total_subpaths,
-																pathkeys,
-																NULL));
+																	  rel,
+																	  total_subpaths,
+																	  pathkeys,
+																	  NULL));
 
 			if (fractional_subpaths)
 				add_path(root, rel, (Path *) create_merge_append_path(root,
-																rel,
-																fractional_subpaths,
-																pathkeys,
-																NULL));
+																	  rel,
+																	  fractional_subpaths,
+																	  pathkeys,
+																	  NULL));
 		}
 	}
 }
@@ -2175,8 +2175,8 @@ set_dummy_rel_pathlist(PlannerInfo *root, RelOptInfo *rel)
 
 	/* Set up the dummy path */
 	add_path(root, rel, (Path *) create_append_path(NULL, rel, NIL, NIL,
-											  NIL, rel->lateral_relids,
-											  0, false, -1));
+													NIL, rel->lateral_relids,
+													0, false, -1));
 
 	/*
 	 * We set the cheapest-path fields immediately, just in case they were
@@ -2805,7 +2805,7 @@ set_function_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 
 	/* Generate appropriate path */
 	add_path(root, rel, create_functionscan_path(root, rel,
-										   pathkeys, required_outer));
+												 pathkeys, required_outer));
 }
 
 /*
@@ -2846,7 +2846,7 @@ set_tablefunc_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 
 	/* Generate appropriate path */
 	add_path(root, rel, create_tablefuncscan_path(root, rel,
-											required_outer));
+												  required_outer));
 }
 
 /*
@@ -4181,7 +4181,7 @@ create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
 		return;
 
 	add_partial_path(root, rel, (Path *) create_bitmap_heap_path(root, rel,
-														   bitmapqual, rel->lateral_relids, 1.0, parallel_workers));
+																 bitmapqual, rel->lateral_relids, 1.0, parallel_workers));
 }
 
 /*

@@ -457,7 +457,7 @@ BuildParameterizedTidPaths(PlannerInfo *root, RelOptInfo *rel, List *clauses)
 		required_outer = bms_del_member(required_outer, rel->relid);
 
 		add_path(root, rel, (Path *) create_tidscan_path(root, rel, tidquals,
-												         required_outer));
+														 required_outer));
 	}
 }
 
@@ -523,8 +523,8 @@ create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel)
 		Relids		required_outer = rel->lateral_relids;
 
 		add_path(root, rel, (Path *) create_tidrangescan_path(root, rel,
-														tidrangequals,
-														required_outer));
+															  tidrangequals,
+															  required_outer));
 	}
 
 	/*
