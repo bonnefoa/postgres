@@ -554,12 +554,12 @@ build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
 												 make_tlist_from_pathtarget(subpath->pathtarget));
 
 			/* Generate outer path using this subpath */
-			add_path(rel, (Path *) create_subqueryscan_path(root,
-															rel,
-															subpath,
-															trivial_tlist,
-															pathkeys,
-															NULL));
+			add_path(root, rel, (Path *) create_subqueryscan_path(root,
+																  rel,
+																  subpath,
+																  trivial_tlist,
+																  pathkeys,
+																  NULL));
 		}
 
 		/* skip dealing with sorted paths if the setop doesn't need them */
@@ -622,12 +622,12 @@ build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
 												 make_tlist_from_pathtarget(subpath->pathtarget));
 
 			/* Generate outer path using this subpath */
-			add_path(rel, (Path *) create_subqueryscan_path(root,
-															rel,
-															subpath,
-															trivial_tlist,
-															pathkeys,
-															NULL));
+			add_path(root, rel, (Path *) create_subqueryscan_path(root,
+																  rel,
+																  subpath,
+																  trivial_tlist,
+																  pathkeys,
+																  NULL));
 		}
 	}
 
@@ -651,7 +651,7 @@ build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
 			create_subqueryscan_path(root, rel, partial_subpath,
 									 trivial_tlist,
 									 NIL, NULL);
-		add_partial_path(rel, partial_path);
+		add_partial_path(root, rel, partial_path);
 	}
 
 	postprocess_setop_rel(root, rel);
@@ -831,22 +831,8 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 	 * Append the child results together using the cheapest paths from each
 	 * union child.
 	 */
-<<<<<<< HEAD
 	apath = (Path *) create_append_path(root, result_rel, cheapest_pathlist,
 										NIL, NIL, NULL, 0, false, -1);
-=======
-	path = (Path *) create_append_path(root, result_rel, pathlist, NIL,
-									   NIL, NULL, 0, false, -1);
-
-	/*
-	 * For UNION ALL, we just need the Append path.  For UNION, need to add
-	 * node(s) to remove duplicates.
-	 */
-	if (!op->all)
-		path = make_union_unique(op, path, tlist, root);
-
-	add_path(root, result_rel, path);
->>>>>>> 26e81de2fa (Propagate planner info)
 
 	/*
 	 * Estimate number of groups.  For now we just assume the output is unique
@@ -897,12 +883,6 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 		gpath = (Path *)
 			create_gather_path(root, result_rel, papath,
 							   result_rel->reltarget, NULL, NULL);
-<<<<<<< HEAD
-=======
-		if (!op->all)
-			ppath = make_union_unique(op, ppath, tlist, root);
-		add_path(root, result_rel, ppath);
->>>>>>> 26e81de2fa (Propagate planner info)
 	}
 
 	if (!op->all)
@@ -939,7 +919,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 											NIL,
 											NULL,
 											dNumGroups);
-			add_path(result_rel, path);
+			add_path(root, result_rel, path);
 
 			/* Try hash aggregate on the Gather path, if valid */
 			if (gpath != NULL)
@@ -955,7 +935,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 												NIL,
 												NULL,
 												dNumGroups);
-				add_path(result_rel, path);
+				add_path(root, result_rel, path);
 			}
 		}
 
@@ -975,7 +955,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 													 list_length(path->pathkeys),
 													 dNumGroups);
 
-			add_path(result_rel, path);
+			add_path(root, result_rel, path);
 
 			/* Try Sort -> Unique on the Gather path, if set */
 			if (gpath != NULL)
@@ -991,7 +971,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 														 path,
 														 list_length(path->pathkeys),
 														 dNumGroups);
-				add_path(result_rel, path);
+				add_path(root, result_rel, path);
 			}
 		}
 
@@ -1016,16 +996,16 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 													 list_length(tlist),
 													 dNumGroups);
 
-			add_path(result_rel, path);
+			add_path(root, result_rel, path);
 		}
 	}
 	else
 	{
 		/* UNION ALL */
-		add_path(result_rel, apath);
+		add_path(root, result_rel, apath);
 
 		if (gpath != NULL)
-			add_path(result_rel, gpath);
+			add_path(root, result_rel, gpath);
 	}
 
 	return result_rel;
