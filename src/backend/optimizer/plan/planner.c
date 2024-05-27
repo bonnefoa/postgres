@@ -595,8 +595,6 @@ standard_planner_all_plans(Query *parse, const char *query_string, int cursorOpt
 	/* Select best Path and turn it into a Plan */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 
-
-
 	foreach(lp, final_rel->pathlist)
 	{
 		Plan	   *plan;

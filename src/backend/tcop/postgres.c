@@ -890,8 +890,27 @@ pg_plan_query_all_candidates(Query *querytree, const char *query_string, int cur
 	/* Planner must have a snapshot in case it calls user-defined functions. */
 	Assert(ActiveSnapshotSet());
 
+	TRACE_POSTGRESQL_QUERY_PLAN_START();
+
+	if (log_planner_stats)
+		ResetUsage();
+
 	/* call the optimizer */
 	plans = standard_planner_all_plans(querytree, query_string, cursorOptions, boundParams);
+
+	/*
+	 * Print plan if debugging.
+	 */
+	if (Debug_print_plan) {
+		ListCell   *lc;
+		foreach(lc, plans)
+		{
+			Plan *plan = lfirst(lc);
+			elog_node_display(LOG, "plan", plan, Debug_pretty_print);
+		}
+	}
+
+	TRACE_POSTGRESQL_QUERY_PLAN_DONE();
 
 	return plans;
 }
