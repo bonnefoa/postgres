@@ -4181,7 +4181,7 @@ create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
 		return;
 
 	add_partial_path(rel, (Path *) create_bitmap_heap_path(root, rel,
-																 bitmapqual, rel->lateral_relids, 1.0, parallel_workers));
+														   bitmapqual, rel->lateral_relids, 1.0, parallel_workers));
 }
 
 /*

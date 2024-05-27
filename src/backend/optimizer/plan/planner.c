@@ -5516,8 +5516,6 @@ create_ordered_paths(PlannerInfo *root,
 	if (input_rel->consider_parallel && target_parallel_safe)
 		ordered_rel->consider_parallel = true;
 
-	// ordered_rel->rows = input_rel->rows;
-
 	/*
 	 * If the input rel belongs to a single FDW, so does the ordered_rel.
 	 */

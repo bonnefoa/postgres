@@ -523,6 +523,7 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 		foreach(plan_list, plans)
 		{
 			char	   *plan_name;
+
 			plan = lfirst(plan_list);
 
 			i++;
