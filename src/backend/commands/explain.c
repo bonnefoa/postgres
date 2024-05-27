@@ -497,7 +497,7 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 
 	/* plan the query */
 	if (es->all_candidates)
-		plans = pg_all_plan_query(query, queryString, cursorOptions, params);
+		plans = pg_plan_query_all_candidates(query, queryString, cursorOptions, params);
 	else
 		plan = pg_plan_query(query, queryString, cursorOptions, params);
 
@@ -522,9 +522,8 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 	{
 		foreach(plan_list, plans)
 		{
-			/* run it (if needed) and produce output */
 			char	   *plan_name;
-			PlannedStmt *plan = lfirst(plan_list);
+			plan = lfirst(plan_list);
 
 			i++;
 			plan_name = psprintf("Plan %d", i);

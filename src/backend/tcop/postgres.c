@@ -878,7 +878,7 @@ pg_rewrite_query(Query *query)
 }
 
 List *
-pg_all_plan_query(Query *querytree, const char *query_string, int cursorOptions,
+pg_plan_query_all_candidates(Query *querytree, const char *query_string, int cursorOptions,
 				  ParamListInfo boundParams)
 {
 	List	   *plans;
