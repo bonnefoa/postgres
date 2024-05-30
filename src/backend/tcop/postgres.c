@@ -896,7 +896,7 @@ pg_plan_query_all_candidates(Query *querytree, const char *query_string, int cur
 		ResetUsage();
 
 	/* call the optimizer */
-	plans = standard_planner_all_plans(querytree, query_string, cursorOptions, boundParams);
+	plans = standard_planner_all_candidates(querytree, query_string, cursorOptions, boundParams);
 
 	/*
 	 * Print plan if debugging.

@@ -115,7 +115,7 @@ extern PGDLLIMPORT bool parallel_leader_participation;
 extern struct PlannedStmt *planner(Query *parse, const char *query_string,
 								   int cursorOptions,
 								   struct ParamListInfoData *boundParams);
-extern List *standard_planner_all_plans(Query *parse, const char *query_string,
+extern List *standard_planner_all_candidates(Query *parse, const char *query_string,
 										int cursorOptions, struct ParamListInfoData *boundParams);
 
 extern Expr *expression_planner(Expr *expr);

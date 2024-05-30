@@ -39,6 +39,7 @@
 #include "nodes/print.h"
 #endif
 #include "nodes/supportnodes.h"
+#include "nodes/print.h"
 #include "optimizer/appendinfo.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
@@ -463,192 +464,11 @@ create_planned_stmt(Query *parse, PlannerInfo *root, Plan *plan, int cursorOptio
 	return result;
 }
 
-List *
-standard_planner_all_plans(Query *parse, const char *query_string, int cursorOptions,
-						   ParamListInfo boundParams)
+static
+PlannerGlobal *
+setup_planner_global(Query *parse, int cursorOptions, ParamListInfo boundParams, bool keepAllCandidates)
 {
-	List	   *result = NULL;
-	PlannerGlobal *base_glob;
-	double		tuple_fraction;
-	PlannerInfo *root;
-	RelOptInfo *final_rel;
-	ListCell   *lp;
-
-	/*
-	 * Set up global state for this planner invocation.  This data is needed
-	 * across all levels of sub-Query that might exist in the given command,
-	 * so we keep it in a separate struct that's linked to by each per-Query
-	 * PlannerInfo.
-	 */
-	base_glob = makeNode(PlannerGlobal);
-
-	base_glob->boundParams = boundParams;
-	base_glob->subplans = NIL;
-	base_glob->subpaths = NIL;
-	base_glob->subroots = NIL;
-	base_glob->rewindPlanIDs = NULL;
-	base_glob->finalrtable = NIL;
-	base_glob->finalrteperminfos = NIL;
-	base_glob->finalrowmarks = NIL;
-	base_glob->resultRelations = NIL;
-	base_glob->appendRelations = NIL;
-	base_glob->relationOids = NIL;
-	base_glob->invalItems = NIL;
-	base_glob->paramExecTypes = NIL;
-	base_glob->lastPHId = 0;
-	base_glob->lastRowMarkId = 0;
-	base_glob->lastPlanNodeId = 0;
-	base_glob->transientPlan = false;
-	base_glob->dependsOnRole = false;
-	base_glob->keepAllCandidates = true;
-
-	/*
-	 * Assess whether it's feasible to use parallel mode for this query. We
-	 * can't do this in a standalone backend, or if the command will try to
-	 * modify any data, or if this is a cursor operation, or if GUCs are set
-	 * to values that don't permit parallelism, or if parallel-unsafe
-	 * functions are present in the query tree.
-	 *
-	 * (Note that we do allow CREATE TABLE AS, SELECT INTO, and CREATE
-	 * MATERIALIZED VIEW to use parallel plans, but this is safe only because
-	 * the command is writing into a completely new table which workers won't
-	 * be able to see.  If the workers could see the table, the fact that
-	 * group locking would cause them to ignore the leader's heavyweight GIN
-	 * page locks would make this unsafe.  We'll have to fix that somehow if
-	 * we want to allow parallel inserts in general; updates and deletes have
-	 * additional problems especially around combo CIDs.)
-	 *
-	 * For now, we don't try to use parallel mode if we're running inside a
-	 * parallel worker.  We might eventually be able to relax this
-	 * restriction, but for now it seems best not to have parallel workers
-	 * trying to create their own parallel workers.
-	 */
-	if ((cursorOptions & CURSOR_OPT_PARALLEL_OK) != 0 &&
-		IsUnderPostmaster &&
-		parse->commandType == CMD_SELECT &&
-		!parse->hasModifyingCTE &&
-		max_parallel_workers_per_gather > 0 &&
-		!IsParallelWorker())
-	{
-		/* all the cheap tests pass, so scan the query tree */
-		base_glob->maxParallelHazard = max_parallel_hazard(parse);
-		base_glob->parallelModeOK = (base_glob->maxParallelHazard != PROPARALLEL_UNSAFE);
-	}
-	else
-	{
-		/* skip the query tree scan, just assume it's unsafe */
-		base_glob->maxParallelHazard = PROPARALLEL_UNSAFE;
-		base_glob->parallelModeOK = false;
-	}
-
-	/*
-	 * glob->parallelModeNeeded is normally set to false here and changed to
-	 * true during plan creation if a Gather or Gather Merge plan is actually
-	 * created (cf. create_gather_plan, create_gather_merge_plan).
-	 *
-	 * However, if debug_parallel_query = on or debug_parallel_query =
-	 * regress, then we impose parallel mode whenever it's safe to do so, even
-	 * if the final plan doesn't use parallelism.  It's not safe to do so if
-	 * the query contains anything parallel-unsafe; parallelModeOK will be
-	 * false in that case.  Note that parallelModeOK can't change after this
-	 * point. Otherwise, everything in the query is either parallel-safe or
-	 * parallel-restricted, and in either case it should be OK to impose
-	 * parallel-mode restrictions.  If that ends up breaking something, then
-	 * either some function the user included in the query is incorrectly
-	 * labeled as parallel-safe or parallel-restricted when in reality it's
-	 * parallel-unsafe, or else the query planner itself has a bug.
-	 */
-	base_glob->parallelModeNeeded = base_glob->parallelModeOK &&
-		(debug_parallel_query != DEBUG_PARALLEL_OFF);
-
-	/* Determine what fraction of the plan is likely to be scanned */
-	if (cursorOptions & CURSOR_OPT_FAST_PLAN)
-	{
-		/*
-		 * We have no real idea how many tuples the user will ultimately FETCH
-		 * from a cursor, but it is often the case that he doesn't want 'em
-		 * all, or would prefer a fast-start plan anyway so that he can
-		 * process some of the tuples sooner.  Use a GUC parameter to decide
-		 * what fraction to optimize for.
-		 */
-		tuple_fraction = cursor_tuple_fraction;
-
-		/*
-		 * We document cursor_tuple_fraction as simply being a fraction, which
-		 * means the edge cases 0 and 1 have to be treated specially here.  We
-		 * convert 1 to 0 ("all the tuples") and 0 to a very small fraction.
-		 */
-		if (tuple_fraction >= 1.0)
-			tuple_fraction = 0.0;
-		else if (tuple_fraction <= 0.0)
-			tuple_fraction = 1e-10;
-	}
-	else
-	{
-		/* Default assumption is we need all the tuples */
-		tuple_fraction = 0.0;
-	}
-
-	/* primary planning entry point (may recurse for subqueries) */
-	root = subquery_planner(base_glob, parse, NULL, false, tuple_fraction, NULL);
-
-	/* Select best Path and turn it into a Plan */
-	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
-
-	foreach(lp, final_rel->pathlist)
-	{
-		Plan	   *plan;
-		PlannedStmt *planned_stmt;
-		Path	   *path = (Path *) lfirst(lp);
-		PlannerGlobal *glob;
-		ListCell   *lr;
-		int			rti;
-
-		/*
-		 * Glob will be modified by create_planned_stmt so we need to create a
-		 * copy and change all subplans and RelOptInfo to use the copy
-		 */
-		glob = makeNode(PlannerGlobal);
-		Assert(base_glob->finalrtable == NIL);
-		*glob = *base_glob;
-		plan = create_plan(root, path);
-
-		glob->subplans = copyObject(glob->subplans);
-		foreach(lr, glob->subroots)
-		{
-			PlannerInfo *subroot = lfirst_node(PlannerInfo, lr);
-
-			subroot->glob = glob;
-		}
-
-		root->glob = glob;
-		for (rti = 1; rti < root->simple_rel_array_size; rti++)
-		{
-			RelOptInfo *brel = root->simple_rel_array[rti];
-
-			if (brel && brel->subroot)
-				brel->subroot->glob = glob;
-		}
-
-		planned_stmt = create_planned_stmt(parse, root, plan, cursorOptions);
-		result = lcons(planned_stmt, result);
-	}
-
-	return result;
-}
-
-
-PlannedStmt *
-standard_planner(Query *parse, const char *query_string, int cursorOptions,
-				 ParamListInfo boundParams)
-{
-	PlannedStmt *result;
 	PlannerGlobal *glob;
-	double		tuple_fraction;
-	PlannerInfo *root;
-	RelOptInfo *final_rel;
-	Path	   *best_path;
-	Plan	   *top_plan;
 
 	/*
 	 * Set up global state for this planner invocation.  This data is needed
@@ -676,7 +496,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	glob->lastPlanNodeId = 0;
 	glob->transientPlan = false;
 	glob->dependsOnRole = false;
-	glob->keepAllCandidates = false;
+	glob->keepAllCandidates = keepAllCandidates;
 
 	/*
 	 * Assess whether it's feasible to use parallel mode for this query. We
@@ -736,6 +556,22 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	 */
 	glob->parallelModeNeeded = glob->parallelModeOK &&
 		(debug_parallel_query != DEBUG_PARALLEL_OFF);
+	return glob;
+}
+
+PlannedStmt *
+standard_planner(Query *parse, const char *query_string, int cursorOptions,
+				 ParamListInfo boundParams)
+{
+	PlannedStmt *result;
+	PlannerGlobal *glob;
+	double		tuple_fraction;
+	PlannerInfo *root;
+	RelOptInfo *final_rel;
+	Path	   *best_path;
+	Plan	   *top_plan;
+
+	glob = setup_planner_global(parse, cursorOptions, boundParams, false);
 
 	/* Determine what fraction of the plan is likely to be scanned */
 	if (cursorOptions & CURSOR_OPT_FAST_PLAN)
@@ -770,6 +606,8 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 
 	/* Select best Path and turn it into a Plan */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
+
+
 	best_path = get_cheapest_fractional_path(final_rel, tuple_fraction);
 
 	top_plan = create_plan(root, best_path);
@@ -778,6 +616,83 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	return result;
 }
 
+List *
+standard_planner_all_candidates(Query *parse, const char *query_string, int cursorOptions,
+								ParamListInfo boundParams)
+{
+	List	   *result = NULL;
+	double		tuple_fraction;
+	Query	   *base_parse;
+	RelOptInfo *upper_rel;
+	int			current_path_index = 0;
+
+	/* Determine what fraction of the plan is likely to be scanned */
+	if (cursorOptions & CURSOR_OPT_FAST_PLAN)
+	{
+		/*
+		 * We have no real idea how many tuples the user will ultimately FETCH
+		 * from a cursor, but it is often the case that he doesn't want 'em
+		 * all, or would prefer a fast-start plan anyway so that he can
+		 * process some of the tuples sooner.  Use a GUC parameter to decide
+		 * what fraction to optimize for.
+		 */
+		tuple_fraction = cursor_tuple_fraction;
+
+		/*
+		 * We document cursor_tuple_fraction as simply being a fraction, which
+		 * means the edge cases 0 and 1 have to be treated specially here.  We
+		 * convert 1 to 0 ("all the tuples") and 0 to a very small fraction.
+		 */
+		if (tuple_fraction >= 1.0)
+			tuple_fraction = 0.0;
+		else if (tuple_fraction <= 0.0)
+			tuple_fraction = 1e-10;
+	}
+	else
+	{
+		/* Default assumption is we need all the tuples */
+		tuple_fraction = 0.0;
+	}
+
+	/* Parse may be modified by planner, save a copy */
+	base_parse = copyObject(parse);
+
+	do
+	{
+		Plan	   *plan;
+		PlannedStmt *planned_stmt;
+		Path	   *path;
+		PlannerGlobal *glob;
+		PlannerInfo *root;
+
+		/*
+		 * During planning, parse, glob and path may be modified. We need to
+		 * create on a copy of those for all planned_stmt we create. However,
+		 * we can't use copyObject on PlannerInfo. The current solution is to
+		 * redo the whole planning for every plan we create.
+		 */
+		parse = copyObject(base_parse);
+		glob = setup_planner_global(parse, cursorOptions, boundParams, true);
+		/* Run the planner */
+		root = subquery_planner(glob, parse, NULL, false, tuple_fraction, NULL);
+		/* Get the path */
+		upper_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
+		if (current_path_index >= upper_rel->pathlist->length)
+		{
+			/* Planner generated a different number of path, bail out */
+			break;
+		}
+		path = (Path *) list_nth(upper_rel->pathlist, current_path_index++);
+
+		/* Create the plan from the path */
+		plan = create_plan(root, path);
+		planned_stmt = create_planned_stmt(parse, root, plan, cursorOptions);
+		/* Add it to the list */
+		result = lcons(planned_stmt, result);
+	} while (current_path_index < upper_rel->pathlist->length);
+
+	return result;
+}
 
 /*--------------------
  * subquery_planner
