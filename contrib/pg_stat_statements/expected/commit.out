@@ -1,0 +1,32 @@
+--
+-- Information related to commit
+--
+-- These tests require track_commit to be enabled.
+SET pg_stat_statements.track_commit = TRUE;
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+ t 
+---
+ t
+(1 row)
+
+--
+-- commit counting
+--
+CREATE TABLE pgss_commit_test (a int, b text);
+INSERT INTO pgss_commit_test (a, b) SELECT generate_series(1, 1000), 'something';
+SELECT commits, calls, rows, query FROM pg_stat_statements;
+ commits | calls | rows |                                 query                                  
+---------+-------+------+------------------------------------------------------------------------
+       1 |     1 |    0 | CREATE TABLE pgss_commit_test (a int, b text)
+       1 |     1 |    1 | SELECT pg_stat_statements_reset() IS NOT NULL AS t
+       1 |     1 | 1000 | INSERT INTO pgss_commit_test (a, b) SELECT generate_series($1, $2), $3
+(3 rows)
+
+-- Cleanup
+DROP TABLE pgss_commit_test;
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+ t 
+---
+ t
+(1 row)
+

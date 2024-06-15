@@ -250,6 +250,80 @@
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>commits</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times the statement triggered a commit
+       (if <varname>pg_stat_statements.track_commit</varname> is enabled,
+       otherwise zero)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>total_commit_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time spent committing the transaction, in milliseconds
+       (if <varname>pg_stat_statements.track_commitning</varname> is enabled,
+       otherwise zero)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>min_commit_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Minimum time spent committing the associated transaction, in milliseconds.
+       This field will be zero if <varname>pg_stat_statements.track_commit</varname>
+       is disabled, or if the counter has been reset using the
+       <function>pg_stat_statements_reset</function> function with the
+       <structfield>minmax_only</structfield> parameter set to <literal>true</literal>
+       and the statement hasn't triggered a transaction commit since.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>max_commit_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Maximum time spent committing the associated transaction, in milliseconds.
+       This field will be zero if <varname>pg_stat_statements.track_commit</varname>
+       is disabled, or if the counter has been reset using the
+       <function>pg_stat_statements_reset</function> function with the
+       <structfield>minmax_only</structfield> parameter set to <literal>true</literal>
+       and the statement hasn't triggered a transaction commit since.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>mean_commit_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Mean time spent committing the associated transaction, in milliseconds
+       (if <varname>pg_stat_statements.track_commit</varname> is enabled,
+       otherwise zero)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>stddev_commit_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Population standard deviation of time spent committing the transaction,
+       in milliseconds
+       (if <varname>pg_stat_statements.track_commit</varname> is enabled,
+       otherwise zero)
+      </para></entry>
+     </row>
+
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>rows</structfield> <type>bigint</type>
       </para>
       <para>
@@ -871,6 +945,28 @@
       (such as statements invoked within functions), or <literal>none</literal> to
       disable statement statistics collection.
       The default value is <literal>top</literal>.
+      Only superusers can change this setting.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <varname>pg_stat_statements.track_commit</varname> (<type>boolean</type>)
+     <indexterm>
+      <primary><varname>pg_stat_statements.track_commit</varname> configuration parameter</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      <varname>pg_stat_statements.track_commit</varname> controls whether
+      commit operations and duration are tracked by the module.
+      Enabling this parameter may incur a noticeable performance penalty,
+      especially when statements with identical query structure are executed
+      by many concurrent connections which compete to update a small number of
+      <structname>pg_stat_statements</structname> entries.
+      The default value is <literal>off</literal>.
       Only superusers can change this setting.
      </para>
     </listitem>

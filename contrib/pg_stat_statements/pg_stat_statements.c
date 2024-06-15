@@ -48,6 +48,7 @@
 #include <unistd.h>
 
 #include "access/parallel.h"
+#include "access/xact.h"
 #include "catalog/pg_authid.h"
 #include "common/hashfn.h"
 #include "common/int.h"
@@ -98,7 +99,7 @@ static const uint32 PGSS_PG_MAJOR_VERSION = PG_VERSION_NUM / 100;
 #define USAGE_DECREASE_FACTOR	(0.99)	/* decreased every entry_dealloc */
 #define STICKY_DECREASE_FACTOR	(0.50)	/* factor for sticky entries */
 #define USAGE_DEALLOC_PERCENT	5	/* free this % of entries at once */
-#define IS_STICKY(c)	((c.calls[PGSS_PLAN] + c.calls[PGSS_EXEC]) == 0)
+#define IS_STICKY(c)	((c.calls[PGSS_PLAN] + c.calls[PGSS_EXEC] + c.calls[PGSS_COMMIT]) == 0)
 
 /*
  * Extension version number, for supporting older extension versions' objects
@@ -113,6 +114,7 @@ typedef enum pgssVersion
 	PGSS_V1_9,
 	PGSS_V1_10,
 	PGSS_V1_11,
+	PGSS_V1_12,
 } pgssVersion;
 
 typedef enum pgssStoreKind
@@ -126,6 +128,7 @@ typedef enum pgssStoreKind
 	 */
 	PGSS_PLAN = 0,
 	PGSS_EXEC,
+	PGSS_COMMIT,
 
 	PGSS_NUMKIND				/* Must be last value of this enum */
 } pgssStoreKind;
@@ -253,6 +256,7 @@ typedef struct pgssSharedState
 
 /* Current nesting depth of planner/ExecutorRun/ProcessUtility calls */
 static int	nesting_level = 0;
+static uint64 latest_queryId;
 
 /* Saved hook values in case of unload */
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
@@ -291,6 +295,7 @@ static int	pgss_track = PGSS_TRACK_TOP;	/* tracking level */
 static bool pgss_track_utility = true;	/* whether to track utility commands */
 static bool pgss_track_planning = false;	/* whether to track planning
 											 * duration */
+static bool pgss_track_commit = false;	/* whether to track commit duration */
 static bool pgss_save = true;	/* whether to save stats across shutdown */
 
 
@@ -318,6 +323,7 @@ PG_FUNCTION_INFO_V1(pg_stat_statements_1_8);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_9);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_10);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_11);
+PG_FUNCTION_INFO_V1(pg_stat_statements_1_12);
 PG_FUNCTION_INFO_V1(pg_stat_statements);
 PG_FUNCTION_INFO_V1(pg_stat_statements_info);
 
@@ -341,6 +347,7 @@ static void pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 								ProcessUtilityContext context, ParamListInfo params,
 								QueryEnvironment *queryEnv,
 								DestReceiver *dest, QueryCompletion *qc);
+static void pgss_xact_callback(XactEvent event, void *arg);
 static void pgss_store(const char *query, uint64 queryId,
 					   int query_location, int query_len,
 					   pgssStoreKind kind,
@@ -433,6 +440,17 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
+	DefineCustomBoolVariable("pg_stat_statements.track_commit",
+							 "Selects whether commit duration is tracked by pg_stat_statements.",
+							 NULL,
+							 &pgss_track_commit,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomBoolVariable("pg_stat_statements.track_planning",
 							 "Selects whether planning duration is tracked by pg_stat_statements.",
 							 NULL,
@@ -478,6 +496,7 @@ _PG_init(void)
 	ExecutorEnd_hook = pgss_ExecutorEnd;
 	prev_ProcessUtility = ProcessUtility_hook;
 	ProcessUtility_hook = pgss_ProcessUtility;
+	RegisterXactCallback(pgss_xact_callback, NULL);
 }
 
 /*
@@ -1260,6 +1279,58 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 }
 
 /*
+ * Handle xact callback events
+ */
+static void
+pgss_xact_callback(XactEvent event, void *arg)
+{
+	static BufferUsage bufusage_start;
+	static WalUsage walusage_start;
+	static instr_time start;
+
+	BufferUsage bufusage;
+	WalUsage	walusage;
+	instr_time	duration;
+
+	if (latest_queryId == UINT64CONST(0) || !pgss_track_commit)
+		return;
+
+	switch (event)
+	{
+		case XACT_EVENT_PRE_COMMIT:
+			bufusage_start = pgBufferUsage;
+			walusage_start = pgWalUsage;
+			INSTR_TIME_SET_CURRENT(start);
+			break;
+		case XACT_EVENT_COMMIT:
+			INSTR_TIME_SET_CURRENT(duration);
+			INSTR_TIME_SUBTRACT(duration, start);
+			/* calc differences of buffer counters. */
+			memset(&bufusage, 0, sizeof(BufferUsage));
+			BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
+			/* calc differences of WAL counters. */
+			memset(&walusage, 0, sizeof(WalUsage));
+			WalUsageAccumDiff(&walusage, &pgWalUsage, &walusage_start);
+			pgss_store(NULL,
+					   latest_queryId,
+					   0,
+					   0,
+					   PGSS_COMMIT,
+					   INSTR_TIME_GET_MILLISEC(duration),
+					   0,
+					   &bufusage,
+					   &walusage,
+					   NULL,
+					   NULL);
+			latest_queryId = UINT64CONST(0);
+			break;
+		default:
+			latest_queryId = UINT64CONST(0);
+			break;
+	}
+}
+
+/*
  * Store some statistics for a statement.
  *
  * If jstate is not NULL then we're trying to create an entry for which
@@ -1285,8 +1356,6 @@ pgss_store(const char *query, uint64 queryId,
 	char	   *norm_query = NULL;
 	int			encoding = GetDatabaseEncoding();
 
-	Assert(query != NULL);
-
 	/* Safety check... */
 	if (!pgss || !pgss_hash)
 		return;
@@ -1303,7 +1372,8 @@ pgss_store(const char *query, uint64 queryId,
 	 * is a portion of a multi-statement source string, and update query
 	 * location and length if needed.
 	 */
-	query = CleanQuerytext(query, &query_location, &query_len);
+	if (query != NULL)
+		query = CleanQuerytext(query, &query_location, &query_len);
 
 	/* Set up key for hashtable search */
 
@@ -1315,13 +1385,16 @@ pgss_store(const char *query, uint64 queryId,
 	key.queryid = queryId;
 	key.toplevel = (nesting_level == 0);
 
+	/* Save the hash key for commit callback */
+	latest_queryId = queryId;
+
 	/* Lookup the hash table entry with shared lock. */
 	LWLockAcquire(pgss->lock, LW_SHARED);
 
 	entry = (pgssEntry *) hash_search(pgss_hash, &key, HASH_FIND, NULL);
 
 	/* Create new entry, if not present */
-	if (!entry)
+	if (!entry && query != NULL)
 	{
 		Size		query_offset;
 		int			gc_count;
@@ -1392,7 +1465,7 @@ pgss_store(const char *query, uint64 queryId,
 		 */
 		volatile pgssEntry *e = (volatile pgssEntry *) entry;
 
-		Assert(kind == PGSS_PLAN || kind == PGSS_EXEC);
+		Assert(kind == PGSS_PLAN || kind == PGSS_EXEC || kind == PGSS_COMMIT);
 
 		SpinLockAcquire(&e->mutex);
 
@@ -1549,7 +1622,8 @@ pg_stat_statements_reset(PG_FUNCTION_ARGS)
 #define PG_STAT_STATEMENTS_COLS_V1_9	33
 #define PG_STAT_STATEMENTS_COLS_V1_10	43
 #define PG_STAT_STATEMENTS_COLS_V1_11	49
-#define PG_STAT_STATEMENTS_COLS			49	/* maximum of above */
+#define PG_STAT_STATEMENTS_COLS_V1_12	55
+#define PG_STAT_STATEMENTS_COLS			55	/* maximum of above */
 
 /*
  * Retrieve statement statistics.
@@ -1561,6 +1635,16 @@ pg_stat_statements_reset(PG_FUNCTION_ARGS)
  * expected API version is identified by embedding it in the C name of the
  * function.  Unfortunately we weren't bright enough to do that for 1.1.
  */
+Datum
+pg_stat_statements_1_12(PG_FUNCTION_ARGS)
+{
+	bool		showtext = PG_GETARG_BOOL(0);
+
+	pg_stat_statements_internal(fcinfo, PGSS_V1_12, showtext);
+
+	return (Datum) 0;
+}
+
 Datum
 pg_stat_statements_1_11(PG_FUNCTION_ARGS)
 {
@@ -1703,6 +1787,10 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 			break;
 		case PG_STAT_STATEMENTS_COLS_V1_11:
 			if (api_version != PGSS_V1_11)
+				elog(ERROR, "incorrect number of output arguments");
+			break;
+		case PG_STAT_STATEMENTS_COLS_V1_12:
+			if (api_version != PGSS_V1_12)
 				elog(ERROR, "incorrect number of output arguments");
 			break;
 		default:
@@ -1861,9 +1949,16 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 		if (IS_STICKY(tmp))
 			continue;
 
-		/* Note that we rely on PGSS_PLAN being 0 and PGSS_EXEC being 1. */
+		/*
+		 * Note that we rely on PGSS_PLAN being 0, PGSS_EXEC being 1 and
+		 * PGSS_COMMIT being 2.
+		 */
 		for (int kind = 0; kind < PGSS_NUMKIND; kind++)
 		{
+			/* Commit kind was introduced with 1.12 */
+			if (kind == PGSS_COMMIT && api_version < PGSS_V1_12)
+				continue;
+
 			if (kind == PGSS_EXEC || api_version >= PGSS_V1_8)
 			{
 				values[i++] = Int64GetDatumFast(tmp.calls[kind]);
@@ -1962,6 +2057,7 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 					 api_version == PGSS_V1_9 ? PG_STAT_STATEMENTS_COLS_V1_9 :
 					 api_version == PGSS_V1_10 ? PG_STAT_STATEMENTS_COLS_V1_10 :
 					 api_version == PGSS_V1_11 ? PG_STAT_STATEMENTS_COLS_V1_11 :
+					 api_version == PGSS_V1_12 ? PG_STAT_STATEMENTS_COLS_V1_12 :
 					 -1 /* fail if you forget to update this assert */ ));
 
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);

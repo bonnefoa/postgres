@@ -1,8 +1,9 @@
 --
 -- statement timestamps
 --
--- planning time is needed during tests
+-- planning and commit time is needed during tests
 SET pg_stat_statements.track_planning = TRUE;
+SET pg_stat_statements.track_commit = TRUE;
 SELECT 1 AS "STMTTS1";
  STMTTS1 
 ---------
@@ -36,6 +37,9 @@ SELECT
     WHERE min_exec_time + max_exec_time = 0
   ) as minmax_exec_zero,
   count(*) FILTER (
+    WHERE min_commit_time + max_commit_time = 0
+  ) as minmax_commit_zero,
+  count(*) FILTER (
     WHERE minmax_stats_since >= :'ref_ts'
   ) as minmax_stats_since_after_ref,
   count(*) FILTER (
@@ -43,9 +47,9 @@ SELECT
   ) as stats_since_after_ref
 FROM pg_stat_statements
 WHERE query LIKE '%STMTTS%';
- total | minmax_plan_zero | minmax_exec_zero | minmax_stats_since_after_ref | stats_since_after_ref 
--------+------------------+------------------+------------------------------+-----------------------
-     2 |                0 |                0 |                            0 |                     0
+ total | minmax_plan_zero | minmax_exec_zero | minmax_commit_zero | minmax_stats_since_after_ref | stats_since_after_ref 
+-------+------------------+------------------+--------------------+------------------------------+-----------------------
+     2 |                0 |                0 |                  0 |                            0 |                     0
 (1 row)
 
 -- Perform single min/max reset
@@ -107,6 +111,9 @@ SELECT
     WHERE min_exec_time + max_exec_time = 0
   ) as minmax_exec_zero,
   count(*) FILTER (
+    WHERE min_commit_time + max_commit_time = 0
+  ) as minmax_commit_zero,
+  count(*) FILTER (
     WHERE minmax_stats_since >= :'ref_ts'
   ) as minmax_ts_after_ref,
   count(*) FILTER (
@@ -117,9 +124,9 @@ SELECT
   ) as stats_since_after_ref
 FROM pg_stat_statements
 WHERE query LIKE '%STMTTS%';
- total | minmax_plan_zero | minmax_exec_zero | minmax_ts_after_ref | minmax_ts_match | stats_since_after_ref 
--------+------------------+------------------+---------------------+-----------------+-----------------------
-     2 |                2 |                2 |                   2 |               2 |                     0
+ total | minmax_plan_zero | minmax_exec_zero | minmax_commit_zero | minmax_ts_after_ref | minmax_ts_match | stats_since_after_ref 
+-------+------------------+------------------+--------------------+---------------------+-----------------+-----------------------
+     2 |                2 |                2 |                  2 |                   2 |               2 |                     0
 (1 row)
 
 -- Execute first query once more to check stats update
@@ -138,6 +145,9 @@ SELECT
     WHERE min_exec_time + max_exec_time = 0
   ) as minmax_exec_zero,
   count(*) FILTER (
+    WHERE min_commit_time + max_commit_time = 0
+  ) as minmax_commit_zero,
+  count(*) FILTER (
     WHERE minmax_stats_since >= :'ref_ts'
   ) as minmax_ts_after_ref,
   count(*) FILTER (
@@ -145,9 +155,9 @@ SELECT
   ) as stats_since_after_ref
 FROM pg_stat_statements
 WHERE query LIKE '%STMTTS%';
- total | minmax_exec_zero | minmax_ts_after_ref | stats_since_after_ref 
--------+------------------+---------------------+-----------------------
-     2 |                1 |                   2 |                     0
+ total | minmax_exec_zero | minmax_commit_zero | minmax_ts_after_ref | stats_since_after_ref 
+-------+------------------+--------------------+---------------------+-----------------------
+     2 |                1 |                  1 |                   2 |                     0
 (1 row)
 
 -- Cleanup

@@ -2,8 +2,9 @@
 -- statement timestamps
 --
 
--- planning time is needed during tests
+-- planning and commit time is needed during tests
 SET pg_stat_statements.track_planning = TRUE;
+SET pg_stat_statements.track_commit = TRUE;
 
 SELECT 1 AS "STMTTS1";
 SELECT now() AS ref_ts \gset
@@ -22,6 +23,9 @@ SELECT
   count(*) FILTER (
     WHERE min_exec_time + max_exec_time = 0
   ) as minmax_exec_zero,
+  count(*) FILTER (
+    WHERE min_commit_time + max_commit_time = 0
+  ) as minmax_commit_zero,
   count(*) FILTER (
     WHERE minmax_stats_since >= :'ref_ts'
   ) as minmax_stats_since_after_ref,
@@ -79,6 +83,9 @@ SELECT
     WHERE min_exec_time + max_exec_time = 0
   ) as minmax_exec_zero,
   count(*) FILTER (
+    WHERE min_commit_time + max_commit_time = 0
+  ) as minmax_commit_zero,
+  count(*) FILTER (
     WHERE minmax_stats_since >= :'ref_ts'
   ) as minmax_ts_after_ref,
   count(*) FILTER (
@@ -101,6 +108,9 @@ SELECT
   count(*) FILTER (
     WHERE min_exec_time + max_exec_time = 0
   ) as minmax_exec_zero,
+  count(*) FILTER (
+    WHERE min_commit_time + max_commit_time = 0
+  ) as minmax_commit_zero,
   count(*) FILTER (
     WHERE minmax_stats_since >= :'ref_ts'
   ) as minmax_ts_after_ref,
