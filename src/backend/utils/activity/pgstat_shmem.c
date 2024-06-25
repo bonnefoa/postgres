@@ -246,6 +246,7 @@ pgstat_detach_shmem(void)
 	pgStatLocal.shared_hash = NULL;
 
 	dsa_detach(pgStatLocal.dsa);
+	dsa_release_in_place(pgStatLocal.shmem->raw_dsa_area);
 	pgStatLocal.dsa = NULL;
 }
 
