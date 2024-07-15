@@ -62,6 +62,9 @@ extern List *pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 extern PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
 								  int cursorOptions,
 								  ParamListInfo boundParams);
+extern List *pg_plan_query_all_candidates(Query *querytree, const char *query_string,
+										  int cursorOptions,
+										  ParamListInfo boundParams);
 extern List *pg_plan_queries(List *querytrees, const char *query_string,
 							 int cursorOptions,
 							 ParamListInfo boundParams);

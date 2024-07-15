@@ -46,6 +46,7 @@ EXPLAIN [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] <rep
     TIMING [ <replaceable class="parameter">boolean</replaceable> ]
     SUMMARY [ <replaceable class="parameter">boolean</replaceable> ]
     MEMORY [ <replaceable class="parameter">boolean</replaceable> ]
+    ALL_CANDIDATES [ <replaceable class="parameter">boolean</replaceable> ]
     FORMAT { TEXT | XML | JSON | YAML }
 </synopsis>
  </refsynopsisdiv>
@@ -294,6 +295,22 @@ ROLLBACK;
    </varlistentry>
 
    <varlistentry>
+    <term><literal>ALL_CANDIDATES</literal></term>
+    <listitem>
+     <para>
+      Print all plan candidates. By default, the planner discards more expensive
+      plans. <literal>ALL_CANDIDATES</literal> forces the planner to keep all
+      plans which will be printed by <command>EXPLAIN</command>. The plans are
+      sorted from the most expensive at the top to the cheapest at the bottom.
+      The last plan and is the plan that is displayed by a normal
+      <command>EXPLAIN</command>.
+      This parameter may only be used when <literal>ANALYZE</literal> is not
+      enabled. It defaults to <literal>FALSE</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>FORMAT</literal></term>
     <listitem>
      <para>
@@ -465,6 +482,27 @@ EXPLAIN (COSTS FALSE) SELECT * FROM foo WHERE i = 4;
  Index Scan using fi on foo
    Index Cond: (i = 4)
 (2 rows)
+</programlisting>
+  </para>
+  <para>
+   Here is the same plan with all plan candidates:
+
+<programlisting>
+EXPLAIN (ALL_CANDIDATES) SELECT * FROM foo where id = 4;
+                                   QUERY PLAN
+---------------------------------------------------------------------------------
+ Plan 1
+   ->  Seq Scan on foo  (cost=0.00..170.00 rows=1 width=4)
+         Filter: (id = 4)
+ Plan 2
+   ->  Bitmap Heap Scan on foo  (cost=4.29..8.31 rows=1 width=4)
+         Recheck Cond: (id = 4)
+         ->  Bitmap Index Scan on foo_id_idx  (cost=0.00..4.29 rows=1 width=0)
+               Index Cond: (id = 4)
+ Plan 3
+   ->  Index Only Scan using foo_id_idx on foo  (cost=0.29..4.30 rows=1 width=4)
+         Index Cond: (id = 4)
+(11 rows)
 </programlisting>
   </para>
 

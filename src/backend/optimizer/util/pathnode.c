@@ -430,6 +430,24 @@ add_path(PlannerInfo *root, RelOptInfo *parent_rel, Path *new_path)
 	 */
 	CHECK_FOR_INTERRUPTS();
 
+	/*
+	 * When keepAllCandidates is enabled, we always add the path in the
+	 * pathlist
+	 */
+	if (root->glob->keepAllCandidates)
+	{
+		foreach(p1, parent_rel->pathlist)
+		{
+			Path	   *old_path = (Path *) lfirst(p1);
+
+			if (new_path->total_cost >= old_path->total_cost)
+				insert_at = foreach_current_index(p1) + 1;
+		}
+		parent_rel->pathlist =
+			list_insert_nth(parent_rel->pathlist, insert_at, new_path);
+		return;
+	}
+
 	/* Pretend parameterized paths have no pathkeys, per comment above */
 	new_path_pathkeys = new_path->param_info ? NIL : new_path->pathkeys;
 

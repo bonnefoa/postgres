@@ -102,6 +102,18 @@ select explain_filter('explain (memory, analyze, format json) select * from int8
 prepare int8_query as select * from int8_tbl i8;
 select explain_filter('explain (memory) execute int8_query');
 
+-- ALL_CANDIDATES option
+begin;
+-- encourage planner to compute parallel plan
+set local min_parallel_table_scan_size=0;
+select explain_filter('explain (all_candidates) select * from int8_tbl i8');
+select explain_filter('explain (all_candidates, summary, format yaml) select * from int8_tbl i8');
+select explain_filter('explain (all_candidates, format json) select * from int8_tbl i8');
+select explain_filter('explain (all_candidates) execute int8_query');
+rollback;
+-- should fail
+select explain_filter('explain (all_candidates, analyze) select * from int8_tbl i8');
+
 -- Test EXPLAIN (GENERIC_PLAN) with partition pruning
 -- partitions should be pruned at plan time, based on constants,
 -- but there should be no pruning based on parameter placeholders

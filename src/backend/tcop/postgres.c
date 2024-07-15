@@ -877,6 +877,50 @@ pg_rewrite_query(Query *query)
 	return querytree_list;
 }
 
+/*
+ * Generate a list of all plan candidates for a single already-rewritten query.
+ * This is a thin wrapper around planner() and takes the same parameters.
+ */
+List *
+pg_plan_query_all_candidates(Query *querytree, const char *query_string, int cursorOptions,
+							 ParamListInfo boundParams)
+{
+	List	   *plans;
+
+	/* Utility commands have no plans. */
+	if (querytree->commandType == CMD_UTILITY)
+		return NULL;
+
+	/* Planner must have a snapshot in case it calls user-defined functions. */
+	Assert(ActiveSnapshotSet());
+
+	TRACE_POSTGRESQL_QUERY_PLAN_START();
+
+	if (log_planner_stats)
+		ResetUsage();
+
+	/* call the optimizer */
+	plans = planner_all_candidates(querytree, cursorOptions, boundParams);
+
+	/*
+	 * Print plan list if debugging.
+	 */
+	if (Debug_print_plan)
+	{
+		ListCell   *lc;
+
+		foreach(lc, plans)
+		{
+			Plan	   *plan = lfirst(lc);
+
+			elog_node_display(LOG, "plan", plan, Debug_pretty_print);
+		}
+	}
+
+	TRACE_POSTGRESQL_QUERY_PLAN_DONE();
+
+	return plans;
+}
 
 /*
  * Generate a plan for a single already-rewritten query.

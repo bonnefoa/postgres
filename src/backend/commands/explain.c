@@ -212,6 +212,8 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 			es->settings = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "generic_plan") == 0)
 			es->generic = defGetBoolean(opt);
+		else if (strcmp(opt->defname, "all_candidates") == 0)
+			es->all_candidates = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "timing") == 0)
 		{
 			timing_set = true;
@@ -302,6 +304,11 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("EXPLAIN options ANALYZE and GENERIC_PLAN cannot be used together")));
+
+	if (es->all_candidates && es->analyze)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("EXPLAIN options ANALYZE and ALL_CANDIDATES cannot be used together")));
 
 	/* if the summary was not set explicitly, set default value */
 	es->summary = (summary_set) ? es->summary : es->analyze;
@@ -458,7 +465,10 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 						 const char *queryString, ParamListInfo params,
 						 QueryEnvironment *queryEnv)
 {
-	PlannedStmt *plan;
+	ListCell   *plan_list;
+	List	   *plans = NULL;
+	PlannedStmt *plan = NULL;
+	int			plan_number = 0;
 	instr_time	planstart,
 				planduration;
 	BufferUsage bufusage_start,
@@ -488,7 +498,10 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 	INSTR_TIME_SET_CURRENT(planstart);
 
 	/* plan the query */
-	plan = pg_plan_query(query, queryString, cursorOptions, params);
+	if (es->all_candidates)
+		plans = pg_plan_query_all_candidates(query, queryString, cursorOptions, params);
+	else
+		plan = pg_plan_query(query, queryString, cursorOptions, params);
 
 	INSTR_TIME_SET_CURRENT(planduration);
 	INSTR_TIME_SUBTRACT(planduration, planstart);
@@ -507,9 +520,43 @@ standard_ExplainOneQuery(Query *query, int cursorOptions,
 	}
 
 	/* run it (if needed) and produce output */
-	ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
-				   &planduration, (es->buffers ? &bufusage : NULL),
-				   es->memory ? &mem_counters : NULL);
+	if (es->all_candidates)
+	{
+		/* We have a list of plan candidates, print them */
+		foreach(plan_list, plans)
+		{
+			char	   *plan_name;
+
+			plan = lfirst(plan_list);
+
+			plan_number++;
+			plan_name = psprintf("Plan %d", plan_number);
+
+			ExplainOpenGroup(plan_name, NULL, true, es);
+			if (es->format == EXPLAIN_FORMAT_TEXT)
+			{
+				ExplainIndentText(es);
+				appendStringInfoString(es->str, plan_name);
+				appendStringInfoString(es->str, "\n");
+				es->indent++;
+			}
+
+			ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
+						   &planduration, (es->buffers ? &bufusage : NULL),
+						   es->memory ? &mem_counters : NULL);
+
+			ExplainCloseGroup(plan_name, NULL, true, es);
+			if (es->format == EXPLAIN_FORMAT_TEXT)
+				es->indent--;
+		}
+	}
+	else
+	{
+		/* We have the top plan from the planner, print it */
+		ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
+					   &planduration, (es->buffers ? &bufusage : NULL),
+					   es->memory ? &mem_counters : NULL);
+	}
 }
 
 /*
