@@ -486,7 +486,7 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 											   root->wt_param_id,
 											   dNumGroups);
 
-	add_path(result_rel, path);
+	add_path(root, result_rel, path);
 	postprocess_setop_rel(root, result_rel);
 	return result_rel;
 }
@@ -554,12 +554,12 @@ build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
 												 make_tlist_from_pathtarget(subpath->pathtarget));
 
 			/* Generate outer path using this subpath */
-			add_path(rel, (Path *) create_subqueryscan_path(root,
-															rel,
-															subpath,
-															trivial_tlist,
-															pathkeys,
-															NULL));
+			add_path(root, rel, (Path *) create_subqueryscan_path(root,
+																  rel,
+																  subpath,
+																  trivial_tlist,
+																  pathkeys,
+																  NULL));
 		}
 
 		/* skip dealing with sorted paths if the setop doesn't need them */
@@ -622,12 +622,12 @@ build_setop_child_paths(PlannerInfo *root, RelOptInfo *rel,
 												 make_tlist_from_pathtarget(subpath->pathtarget));
 
 			/* Generate outer path using this subpath */
-			add_path(rel, (Path *) create_subqueryscan_path(root,
-															rel,
-															subpath,
-															trivial_tlist,
-															pathkeys,
-															NULL));
+			add_path(root, rel, (Path *) create_subqueryscan_path(root,
+																  rel,
+																  subpath,
+																  trivial_tlist,
+																  pathkeys,
+																  NULL));
 		}
 	}
 
@@ -919,7 +919,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 											NIL,
 											NULL,
 											dNumGroups);
-			add_path(result_rel, path);
+			add_path(root, result_rel, path);
 
 			/* Try hash aggregate on the Gather path, if valid */
 			if (gpath != NULL)
@@ -935,7 +935,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 												NIL,
 												NULL,
 												dNumGroups);
-				add_path(result_rel, path);
+				add_path(root, result_rel, path);
 			}
 		}
 
@@ -955,7 +955,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 													 list_length(path->pathkeys),
 													 dNumGroups);
 
-			add_path(result_rel, path);
+			add_path(root, result_rel, path);
 
 			/* Try Sort -> Unique on the Gather path, if set */
 			if (gpath != NULL)
@@ -971,7 +971,7 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 														 path,
 														 list_length(path->pathkeys),
 														 dNumGroups);
-				add_path(result_rel, path);
+				add_path(root, result_rel, path);
 			}
 		}
 
@@ -996,16 +996,16 @@ generate_union_paths(SetOperationStmt *op, PlannerInfo *root,
 													 list_length(tlist),
 													 dNumGroups);
 
-			add_path(result_rel, path);
+			add_path(root, result_rel, path);
 		}
 	}
 	else
 	{
 		/* UNION ALL */
-		add_path(result_rel, apath);
+		add_path(root, result_rel, apath);
 
 		if (gpath != NULL)
-			add_path(result_rel, gpath);
+			add_path(root, result_rel, gpath);
 	}
 
 	return result_rel;
@@ -1188,7 +1188,7 @@ generate_nonunion_paths(SetOperationStmt *op, PlannerInfo *root,
 									  dNumOutputRows);
 
 	result_rel->rows = path->rows;
-	add_path(result_rel, path);
+	add_path(root, result_rel, path);
 	return result_rel;
 }
 

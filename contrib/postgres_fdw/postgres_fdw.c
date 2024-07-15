@@ -1037,7 +1037,7 @@ postgresGetForeignPaths(PlannerInfo *root,
 								   NULL,	/* no extra plan */
 								   NIL, /* no fdw_restrictinfo list */
 								   NIL);	/* no fdw_private list */
-	add_path(baserel, (Path *) path);
+	add_path(root, baserel, (Path *) path);
 
 	/* Add paths with pathkeys */
 	add_paths_with_pathkeys_for_rel(root, baserel, NULL, NIL);
@@ -1210,7 +1210,7 @@ postgresGetForeignPaths(PlannerInfo *root,
 									   NULL,
 									   NIL, /* no fdw_restrictinfo list */
 									   NIL);	/* no fdw_private list */
-		add_path(baserel, (Path *) path);
+		add_path(root, baserel, (Path *) path);
 	}
 }
 
@@ -6171,7 +6171,7 @@ add_paths_with_pathkeys_for_rel(PlannerInfo *root, RelOptInfo *rel,
 								 -1.0);
 
 		if (IS_SIMPLE_REL(rel))
-			add_path(rel, (Path *)
+			add_path(root, rel, (Path *)
 					 create_foreignscan_path(root, rel,
 											 NULL,
 											 rows,
@@ -6184,7 +6184,7 @@ add_paths_with_pathkeys_for_rel(PlannerInfo *root, RelOptInfo *rel,
 													 * list */
 											 NIL));
 		else
-			add_path(rel, (Path *)
+			add_path(root, rel, (Path *)
 					 create_foreign_join_path(root, rel,
 											  NULL,
 											  rows,
@@ -6450,7 +6450,7 @@ postgresGetForeignJoinPaths(PlannerInfo *root,
 										NIL);	/* no fdw_private */
 
 	/* Add generated path into joinrel by add_path(). */
-	add_path(joinrel, (Path *) joinpath);
+	add_path(root, joinrel, (Path *) joinpath);
 
 	/* Consider pathkeys for the join relation */
 	add_paths_with_pathkeys_for_rel(root, joinrel, epq_path,
@@ -6839,7 +6839,7 @@ add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 										  NIL); /* no fdw_private */
 
 	/* Add generated path into grouped_rel by add_path(). */
-	add_path(grouped_rel, (Path *) grouppath);
+	add_path(root, grouped_rel, (Path *) grouppath);
 }
 
 /*
@@ -6974,7 +6974,7 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 											 fdw_private);
 
 	/* and add it to the ordered_rel */
-	add_path(ordered_rel, (Path *) ordered_path);
+	add_path(root, ordered_rel, (Path *) ordered_path);
 }
 
 /*
@@ -7091,7 +7091,7 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 													   NIL);	/* no fdw_private */
 
 				/* and add it to the final_rel */
-				add_path(final_rel, (Path *) final_path);
+				add_path(root, final_rel, (Path *) final_path);
 
 				/* Safe to push down */
 				fpinfo->pushdown_safe = true;
@@ -7226,7 +7226,7 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 										   fdw_private);
 
 	/* and add it to the final_rel */
-	add_path(final_rel, (Path *) final_path);
+	add_path(root, final_rel, (Path *) final_path);
 }
 
 /*

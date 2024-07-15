@@ -572,7 +572,7 @@ fileGetForeignPaths(PlannerInfo *root,
 	 * it could still have required parameterization due to LATERAL refs in
 	 * its tlist.
 	 */
-	add_path(baserel, (Path *)
+	add_path(root, baserel, (Path *)
 			 create_foreignscan_path(root, baserel,
 									 NULL,	/* default pathtarget */
 									 baserel->rows,

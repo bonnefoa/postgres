@@ -399,7 +399,7 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 			 * Restriction clause reduced to constant FALSE or NULL.  Mark as
 			 * dummy so we won't scan this relation.
 			 */
-			mark_dummy_rel(rel);
+			mark_dummy_rel(root, rel);
 		}
 	}
 

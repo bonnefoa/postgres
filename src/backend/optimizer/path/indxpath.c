@@ -340,7 +340,7 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 		bitmapqual = choose_bitmap_and(root, rel, bitindexpaths);
 		bpath = create_bitmap_heap_path(root, rel, bitmapqual,
 										rel->lateral_relids, 1.0, 0);
-		add_path(rel, (Path *) bpath);
+		add_path(root, rel, (Path *) bpath);
 
 		/* create a partial bitmap heap path */
 		if (rel->consider_parallel && rel->lateral_relids == NULL)
@@ -407,7 +407,7 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 			loop_count = get_loop_count(root, rel->relid, required_outer);
 			bpath = create_bitmap_heap_path(root, rel, bitmapqual,
 											required_outer, loop_count, 0);
-			add_path(rel, (Path *) bpath);
+			add_path(root, rel, (Path *) bpath);
 		}
 	}
 }
@@ -742,7 +742,7 @@ get_index_paths(PlannerInfo *root, RelOptInfo *rel,
 		IndexPath  *ipath = (IndexPath *) lfirst(lc);
 
 		if (index->amhasgettuple)
-			add_path(rel, (Path *) ipath);
+			add_path(root, rel, (Path *) ipath);
 
 		if (index->amhasgetbitmap &&
 			(ipath->path.pathkeys == NIL ||

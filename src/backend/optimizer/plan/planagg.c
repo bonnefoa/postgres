@@ -216,7 +216,7 @@ preprocess_minmax_aggregates(PlannerInfo *root)
 	 * doesn't need to change anymore, so making the pathtarget now is safe.
 	 */
 	grouped_rel = fetch_upper_rel(root, UPPERREL_GROUP_AGG, NULL);
-	add_path(grouped_rel, (Path *)
+	add_path(root, grouped_rel, (Path *)
 			 create_minmaxagg_path(root, grouped_rel,
 								   create_pathtarget(root,
 													 root->processed_tlist),

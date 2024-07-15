@@ -133,7 +133,7 @@ query_planner(PlannerInfo *root,
 				 * SELECT is a kind of degenerate-grouping case, so it's not
 				 * that much of a cheat.)
 				 */
-				add_path(final_rel, (Path *)
+				add_path(root, final_rel, (Path *)
 						 create_group_result_path(root, final_rel,
 												  final_rel->reltarget,
 												  (List *) parse->jointree->quals));
