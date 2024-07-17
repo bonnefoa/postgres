@@ -303,6 +303,14 @@ ExecutorRun(QueryDesc *queryDesc,
 			ScanDirection direction, uint64 count,
 			bool execute_once)
 {
+	/*
+	 * When using extended protocol, query_id will be reset during
+	 * pgstat_report_activity and never set since we don't go through parse
+	 * analysis or ExecutorStart. Similar to what's done in ExecutorStart,
+	 * report the queryId we know from the queryDesc.
+	 */
+	pgstat_report_query_id(queryDesc->plannedstmt->queryId, false);
+
 	if (ExecutorRun_hook)
 		(*ExecutorRun_hook) (queryDesc, direction, count, execute_once);
 	else
