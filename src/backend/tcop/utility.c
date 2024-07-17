@@ -63,6 +63,7 @@
 #include "storage/fd.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
+#include "utils/backend_status.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 
@@ -509,6 +510,12 @@ ProcessUtility(PlannedStmt *pstmt,
 	Assert(pstmt->commandType == CMD_UTILITY);
 	Assert(queryString != NULL);	/* required as of 8.4 */
 	Assert(qc == NULL || qc->commandTag == CMDTAG_UNKNOWN);
+
+	/*
+	 * Utility statement executed through extended protocol won't have
+	 * query_id set, report it here
+	 */
+	pgstat_report_query_id(pstmt->queryId, false);
 
 	/*
 	 * We provide a function hook variable that lets loadable plugins get
