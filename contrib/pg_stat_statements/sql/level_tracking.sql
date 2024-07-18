@@ -33,6 +33,18 @@ END; $$;
 SELECT toplevel, calls, query FROM pg_stat_statements
   ORDER BY query COLLATE "C", toplevel;
 
+-- Procedure with multiple utility statements - all level tracking.
+CREATE OR REPLACE PROCEDURE proc_with_utility_stmt()
+LANGUAGE SQL
+AS $$
+    SHOW pg_stat_statements.track;
+    SHOW pg_stat_statements.track_utility;
+$$;
+CALL proc_with_utility_stmt();
+SELECT toplevel, calls, query FROM pg_stat_statements
+  WHERE query LIKE '%SHOW%' ORDER BY query COLLATE "C", toplevel;
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+
 -- DO block - top-level tracking without utility.
 SET pg_stat_statements.track = 'top';
 SET pg_stat_statements.track_utility = FALSE;
