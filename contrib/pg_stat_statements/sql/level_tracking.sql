@@ -81,6 +81,89 @@ CALL proc_with_utility_stmt();
 SELECT toplevel, calls, query FROM pg_stat_statements
   ORDER BY query COLLATE "C", toplevel;
 
+-- Create Table As, all-level tracking.
+SET pg_stat_statements.track = 'all';
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+CREATE TEMPORARY TABLE pgss_test AS SELECT 1;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Create Table As using prepared stmt, all-level tracking.
+PREPARE test_prepare_pgss AS select generate_series(1, 10);
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+CREATE TEMPORARY TABLE pgss_test2 AS EXECUTE test_prepare_pgss;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Declare cursor, all-level tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+BEGIN;
+DECLARE FOOCUR CURSOR FOR SELECT * from stats_track_tab;
+FETCH FORWARD 1 FROM foocur;
+CLOSE foocur;
+COMMIT;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Explain analyze, all-level tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT 100;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Explain analyze with declare cursor, all-level tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF) DECLARE foocur CURSOR FOR SELECT * FROM stats_track_tab;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Explain with ctas, all-level tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) CREATE TABLE pgss_test_3 AS SELECT 1;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Create Table As, top-level tracking.
+SET pg_stat_statements.track = 'top';
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+CREATE TABLE pgss_test_4 AS SELECT 1;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Create Table As using prepared stmt, top tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+CREATE TEMPORARY TABLE pgss_test5 AS EXECUTE test_prepare_pgss;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Declare cursor, top tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+BEGIN;
+DECLARE FOOCUR CURSOR FOR SELECT * from stats_track_tab;
+FETCH FORWARD 1 FROM foocur;
+CLOSE foocur;
+COMMIT;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Explain analyze, top tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF) SELECT 100;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Explain analyze with declare cursor, top tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF) DECLARE foocur CURSOR FOR SELECT * FROM stats_track_tab;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Explain with ctas, top-level tracking.
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+EXPLAIN (COSTS OFF, SUMMARY OFF, TIMING OFF) CREATE TABLE pgss_test_3 AS SELECT 1;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
 -- DO block - top-level tracking without utility.
 SET pg_stat_statements.track = 'top';
 SET pg_stat_statements.track_utility = FALSE;
