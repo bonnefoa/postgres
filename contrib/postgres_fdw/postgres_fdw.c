@@ -498,10 +498,9 @@ static void process_query_params(ExprContext *econtext,
 								 FmgrInfo *param_flinfo,
 								 List *param_exprs,
 								 const char **param_values);
-static int	postgresAcquireSampleRowsFunc(Relation relation, int elevel,
-										  HeapTuple *rows, int targrows,
-										  double *totalrows,
-										  double *totaldeadrows);
+static int	postgresAcquireSampleRowsFunc(Relation relation, HeapTuple *rows,
+										  int targrows, double *totalrows,
+										  double *totaldeadrows, StringInfo logbuf);
 static void analyze_row_processor(PGresult *res, int row,
 								  PgFdwAnalyzeState *astate);
 static void produce_tuple_asynchronously(AsyncRequest *areq, bool fetch);
@@ -5064,10 +5063,9 @@ postgresGetAnalyzeInfoForForeignTable(Relation relation, bool *can_tablesample)
  * currently (the planner only pays attention to correlation for indexscans).
  */
 static int
-postgresAcquireSampleRowsFunc(Relation relation, int elevel,
-							  HeapTuple *rows, int targrows,
-							  double *totalrows,
-							  double *totaldeadrows)
+postgresAcquireSampleRowsFunc(Relation relation, HeapTuple *rows,
+							  int targrows, double *totalrows,
+							  double *totaldeadrows, StringInfo logbuf)
 {
 	PgFdwAnalyzeState astate;
 	ForeignTable *table;
@@ -5359,12 +5357,11 @@ postgresAcquireSampleRowsFunc(Relation relation, int elevel,
 		*totalrows = reltuples;
 
 	/*
-	 * Emit some interesting relation info
+	 * Add some interesting relation info to logbuf
 	 */
-	ereport(elevel,
-			(errmsg("\"%s\": table contains %.0f rows, %d rows in sample",
-					RelationGetRelationName(relation),
-					*totalrows, astate.numrows)));
+	appendStringInfo(logbuf,
+					 "tuples: %.0f tuples; %d tuples in sample\n",
+					 *totalrows, astate.numrows);
 
 	return astate.numrows;
 }

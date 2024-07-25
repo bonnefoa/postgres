@@ -87,13 +87,13 @@ static void compute_index_stats(Relation onerel, double totalrows,
 								MemoryContext col_context);
 static VacAttrStats *examine_attribute(Relation onerel, int attnum,
 									   Node *index_expr);
-static int	acquire_sample_rows(Relation onerel, int elevel,
-								HeapTuple *rows, int targrows,
-								double *totalrows, double *totaldeadrows);
+static int	acquire_sample_rows(Relation onerel, HeapTuple *rows,
+								int targrows, double *totalrows,
+								double *totaldeadrows, StringInfo logbuf);
 static int	compare_rows(const void *a, const void *b, void *arg);
-static int	acquire_inherited_sample_rows(Relation onerel, int elevel,
-										  HeapTuple *rows, int targrows,
-										  double *totalrows, double *totaldeadrows);
+static int	acquire_inherited_sample_rows(Relation onerel, HeapTuple *rows,
+										  int targrows, double *totalrows,
+										  double *totaldeadrows, StringInfo logbuf);
 static void update_attstats(Oid relid, bool inh,
 							int natts, VacAttrStats **vacattrstats);
 static Datum std_fetch_func(VacAttrStatsP stats, int rownum, bool *isNull);
@@ -310,6 +310,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	BufferUsage bufferusage;
 	PgStat_Counter startreadtime = 0;
 	PgStat_Counter startwritetime = 0;
+	StringInfoData logbuf;
 
 	verbose = (params->options & VACOPT_VERBOSE) != 0;
 	instrument = (verbose || (AmAutoVacuumWorkerProcess() &&
@@ -333,6 +334,9 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 										"Analyze",
 										ALLOCSET_DEFAULT_SIZES);
 	caller_context = MemoryContextSwitchTo(anl_context);
+
+	/* Initialize log buffer */
+	initStringInfo(&logbuf);
 
 	/*
 	 * Switch to the table owner's userid, so that any index functions are run
@@ -528,13 +532,11 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								 inh ? PROGRESS_ANALYZE_PHASE_ACQUIRE_SAMPLE_ROWS_INH :
 								 PROGRESS_ANALYZE_PHASE_ACQUIRE_SAMPLE_ROWS);
 	if (inh)
-		numrows = acquire_inherited_sample_rows(onerel, elevel,
-												rows, targrows,
-												&totalrows, &totaldeadrows);
+		numrows = acquire_inherited_sample_rows(onerel, rows, targrows,
+												&totalrows, &totaldeadrows, &logbuf);
 	else
-		numrows = (*acquirefunc) (onerel, elevel,
-								  rows, targrows,
-								  &totalrows, &totaldeadrows);
+		numrows = (*acquirefunc) (onerel, rows, targrows,
+								  &totalrows, &totaldeadrows, &logbuf);
 
 	/*
 	 * Compute the statistics.  Temporary results during the calculations for
@@ -808,6 +810,10 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 							 get_database_name(MyDatabaseId),
 							 get_namespace_name(RelationGetNamespace(onerel)),
 							 RelationGetRelationName(onerel));
+
+			/* Append logs from sampling function */
+			appendBinaryStringInfo(&buf, logbuf.data, logbuf.len);
+
 			if (track_io_timing)
 			{
 				double		read_ms = (double) (pgStatBlockReadTime - startreadtime) / 1000;
@@ -1182,9 +1188,9 @@ block_sampling_read_stream_next(ReadStream *stream,
  * density near the start of the table.
  */
 static int
-acquire_sample_rows(Relation onerel, int elevel,
-					HeapTuple *rows, int targrows,
-					double *totalrows, double *totaldeadrows)
+acquire_sample_rows(Relation onerel, HeapTuple *rows,
+					int targrows, double *totalrows,
+					double *totaldeadrows, StringInfo logbuf)
 {
 	int			numrows = 0;	/* # rows now in reservoir */
 	double		samplerows = 0; /* total # rows collected */
@@ -1321,16 +1327,12 @@ acquire_sample_rows(Relation onerel, int elevel,
 	}
 
 	/*
-	 * Emit some interesting relation info
+	 * Add interesting relation info to logbuf
 	 */
-	ereport(elevel,
-			(errmsg("\"%s\": scanned %d of %u pages, "
-					"containing %.0f live rows and %.0f dead rows; "
-					"%d rows in sample, %.0f estimated total rows",
-					RelationGetRelationName(onerel),
-					bs.m, totalblocks,
-					liverows, deadrows,
-					numrows, *totalrows)));
+	appendStringInfo(logbuf, _("pages: %u of %u scanned\n"),
+					 bs.m, totalblocks);
+	appendStringInfo(logbuf, _("tuples: %.0f live tuples, %.0f are dead; %d tuples in sample, %.0f estimated total tuples\n"),
+					 liverows, deadrows, numrows, *totalrows);
 
 	return numrows;
 }
@@ -1369,9 +1371,9 @@ compare_rows(const void *a, const void *b, void *arg)
  * children are foreign tables that don't support ANALYZE.
  */
 static int
-acquire_inherited_sample_rows(Relation onerel, int elevel,
-							  HeapTuple *rows, int targrows,
-							  double *totalrows, double *totaldeadrows)
+acquire_inherited_sample_rows(Relation onerel, HeapTuple *rows,
+							  int targrows, double *totalrows,
+							  double *totaldeadrows, StringInfo logbuf)
 {
 	List	   *tableOIDs;
 	Relation   *rels;
@@ -1407,10 +1409,10 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 		/* CCI because we already updated the pg_class row in this command */
 		CommandCounterIncrement();
 		SetRelationHasSubclass(RelationGetRelid(onerel), false);
-		ereport(elevel,
-				(errmsg("skipping analyze of \"%s.%s\" inheritance tree --- this inheritance tree contains no child tables",
-						get_namespace_name(RelationGetNamespace(onerel)),
-						RelationGetRelationName(onerel))));
+		appendStringInfo(logbuf,
+						 "skipping analyze of \"%s.%s\" inheritance tree --- this inheritance tree contains no child tables\n",
+						 get_namespace_name(RelationGetNamespace(onerel)),
+						 RelationGetRelationName(onerel));
 		return 0;
 	}
 
@@ -1505,10 +1507,10 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 	 */
 	if (!has_child)
 	{
-		ereport(elevel,
-				(errmsg("skipping analyze of \"%s.%s\" inheritance tree --- this inheritance tree contains no analyzable child tables",
-						get_namespace_name(RelationGetNamespace(onerel)),
-						RelationGetRelationName(onerel))));
+		appendStringInfo(logbuf,
+						 "skipping analyze of \"%s.%s\" inheritance tree --- this inheritance tree contains no analyzable child tables\n",
+						 get_namespace_name(RelationGetNamespace(onerel)),
+						 RelationGetRelationName(onerel));
 		return 0;
 	}
 
@@ -1560,10 +1562,13 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 				double		trows,
 							tdrows;
 
+				appendStringInfo(logbuf, _("Sampling rows from child \"%s.%s\"\n"),
+								 get_namespace_name(RelationGetNamespace(childrel)),
+								 RelationGetRelationName(childrel));
 				/* Fetch a random sample of the child's rows */
-				childrows = (*acquirefunc) (childrel, elevel,
-											rows + numrows, childtargrows,
-											&trows, &tdrows);
+				childrows = (*acquirefunc) (childrel, rows + numrows,
+											childtargrows, &trows,
+											&tdrows, logbuf);
 
 				/* We may need to convert from child's rowtype to parent's */
 				if (childrows > 0 &&

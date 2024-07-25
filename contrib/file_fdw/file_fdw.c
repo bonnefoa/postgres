@@ -160,9 +160,9 @@ static void estimate_size(PlannerInfo *root, RelOptInfo *baserel,
 static void estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
 						   FileFdwPlanState *fdw_private,
 						   Cost *startup_cost, Cost *total_cost);
-static int	file_acquire_sample_rows(Relation onerel, int elevel,
-									 HeapTuple *rows, int targrows,
-									 double *totalrows, double *totaldeadrows);
+static int	file_acquire_sample_rows(Relation onerel, HeapTuple *rows,
+									 int targrows, double *totalrows,
+									 double *totaldeadrows, StringInfo logbuf);
 
 
 /*
@@ -1120,9 +1120,9 @@ estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
  * currently (the planner only pays attention to correlation for indexscans).
  */
 static int
-file_acquire_sample_rows(Relation onerel, int elevel,
-						 HeapTuple *rows, int targrows,
-						 double *totalrows, double *totaldeadrows)
+file_acquire_sample_rows(Relation onerel, HeapTuple *rows,
+						 int targrows, double *totalrows,
+						 double *totaldeadrows, StringInfo logbuf)
 {
 	int			numrows = 0;
 	double		rowstoskip = -1;	/* -1 means not set yet */
@@ -1241,13 +1241,10 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	pfree(nulls);
 
 	/*
-	 * Emit some interesting relation info
+	 * Add some interesting relation info to logbuf
 	 */
-	ereport(elevel,
-			(errmsg("\"%s\": file contains %.0f rows; "
-					"%d rows in sample",
-					RelationGetRelationName(onerel),
-					*totalrows, numrows)));
+	appendStringInfo(logbuf, "tuples: %.0f tuples; %d tuples in sample\n",
+					 *totalrows, numrows);
 
 	return numrows;
 }
