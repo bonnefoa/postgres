@@ -1393,11 +1393,11 @@ AnalyzeForeignTable(Relation relation,
 <programlisting>
 int
 AcquireSampleRowsFunc(Relation relation,
-                      int elevel,
                       HeapTuple *rows,
                       int targrows,
                       double *totalrows,
-                      double *totaldeadrows);
+                      double *totaldeadrows,
+                      StringInfo logbuf);
 </programlisting>
 
      A random sample of up to <parameter>targrows</parameter> rows should be collected
