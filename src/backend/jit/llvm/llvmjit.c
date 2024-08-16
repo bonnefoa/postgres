@@ -1316,6 +1316,10 @@ llvm_log_jit_error(void *ctx, LLVMErrorRef error)
 static LLVMOrcObjectLayerRef
 llvm_create_object_layer(void *Ctx, LLVMOrcExecutionSessionRef ES, const char *Triple)
 {
+#if defined(USE_JITLINK)
+	LLVMOrcObjectLayerRef objlayer =
+	LLVMOrcCreateJitlinkObjectLinkingLayer(ES);
+#else
 	LLVMOrcObjectLayerRef objlayer =
 		LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(ES);
 
@@ -1335,6 +1339,7 @@ llvm_create_object_layer(void *Ctx, LLVMOrcExecutionSessionRef ES, const char *T
 
 		LLVMOrcRTDyldObjectLinkingLayerRegisterJITEventListener(objlayer, l);
 	}
+#endif
 #endif
 
 	return objlayer;
@@ -1369,6 +1374,13 @@ llvm_create_jit_instance(LLVMTargetMachineRef tm)
 
 	LLVMOrcExecutionSessionSetErrorReporter(LLVMOrcLLJITGetExecutionSession(lljit),
 											llvm_log_jit_error, NULL);
+
+	error = LLVMOrcAddGDBPluginObjectLinkingLayer(LLVMOrcLLJITGetObjLinkingLayer(lljit),
+									   LLVMOrcLLJITGetExecutionSession(lljit),
+									   LLVMOrcLLJITGetMainJITDylib(lljit), llvm_triple);
+	if (error)
+		elog(ERROR, "failed to create lljit instance: %s",
+			 llvm_error_message(error));
 
 	/*
 	 * Symbol resolution support for symbols in the postgres binary /

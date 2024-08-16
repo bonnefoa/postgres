@@ -33,7 +33,15 @@ extern "C"
 #endif
 
 #include "jit/llvmjit.h"
-
+#ifdef USE_JITLINK
+#include "llvm/ExecutionEngine/JITLink/EHFrameSupport.h"
+#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
+#if LLVM_VERSION_MAJOR > 17
+#include "llvm/ExecutionEngine/Orc/Debugging/DebuggerSupportPlugin.h"
+#else
+#include "llvm/ExecutionEngine/Orc/DebuggerSupportPlugin.h"
+#endif
+#endif
 
 /*
  * C-API extensions.
@@ -101,4 +109,36 @@ LLVMGlobalGetValueType(LLVMValueRef g)
 {
 	return llvm::wrap(llvm::unwrap<llvm::GlobalValue>(g)->getValueType());
 }
+#endif
+
+#ifdef USE_JITLINK
+/*
+ * There is no public C API to create ObjectLinkingLayer for JITLINK, create our own
+ */
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(llvm::orc::ExecutionSession, LLVMOrcExecutionSessionRef)
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(llvm::orc::ObjectLinkingLayer, LLVMOrcObjectLayerRef)
+DEFINE_SIMPLE_CONVERSION_FUNCTIONS(llvm::orc::JITDylib , LLVMOrcJITDylibRef)
+
+LLVMOrcObjectLayerRef
+LLVMOrcCreateJitlinkObjectLinkingLayer(LLVMOrcExecutionSessionRef ES)
+{
+	Assert(ES);
+	auto *ObjLinkingLayer = new llvm::orc::ObjectLinkingLayer(*unwrap(ES));
+	ObjLinkingLayer->addPlugin(std::make_unique<llvm::orc::EHFrameRegistrationPlugin>(
+		*unwrap(ES), std::make_unique<llvm::jitlink::InProcessEHFrameRegistrar>()));
+	return wrap(ObjLinkingLayer);
+}
+
+LLVMErrorRef
+LLVMOrcAddGDBPluginObjectLinkingLayer(LLVMOrcObjectLayerRef OL, LLVMOrcExecutionSessionRef ES, LLVMOrcJITDylibRef JD, const char *triple)
+{
+    auto GDBPlugin = llvm::orc::GDBJITDebugInfoRegistrationPlugin::Create(
+        *unwrap(ES), *unwrap(JD), llvm::Triple(triple));
+    if (!GDBPlugin) {
+        return wrap(GDBPlugin.takeError());
+    }
+	unwrap(OL)->addPlugin(std::move(*GDBPlugin));
+    return LLVMErrorSuccess;
+}
+
 #endif

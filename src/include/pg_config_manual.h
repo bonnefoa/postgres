@@ -370,3 +370,14 @@
  * Enable tracing of syncscan operations (see also the trace_syncscan GUC var).
  */
 /* #define TRACE_SYNCSCAN */
+
+/*
+ * Use JITLINK rather than legacy RTDyld linker for LLVM JIT. The RTDyld
+ * section allocations do not respect some AArch64 ABI restrictions.
+ * See: https://github.com/llvm/llvm-project/issues/71963
+ *
+ * Experiment to switch to JITLINK, inspired by other project such as Julia and Numba.
+ */
+#define USE_JITLINK 1
+
+

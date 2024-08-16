@@ -19,6 +19,9 @@
 
 #include <llvm-c/Types.h>
 
+#ifdef USE_JITLINK
+#include <llvm-c/Orc.h>
+#endif
 
 /*
  * File needs to be includable by both C and C++ code, and include other
@@ -151,6 +154,11 @@ extern LLVMTypeRef LLVMGetFunctionType(LLVMValueRef r);
 
 #if LLVM_MAJOR_VERSION < 8
 extern LLVMTypeRef LLVMGlobalGetValueType(LLVMValueRef g);
+#endif
+
+#ifdef USE_JITLINK
+extern LLVMOrcObjectLayerRef LLVMOrcCreateJitlinkObjectLinkingLayer(LLVMOrcExecutionSessionRef ES);
+extern LLVMErrorRef LLVMOrcAddGDBPluginObjectLinkingLayer(LLVMOrcObjectLayerRef OL, LLVMOrcExecutionSessionRef ES, LLVMOrcJITDylibRef JD, const char *triple);
 #endif
 
 #ifdef __cplusplus
