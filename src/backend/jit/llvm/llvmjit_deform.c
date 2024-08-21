@@ -49,6 +49,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 	LLVMBasicBlockRef b_out;
 	LLVMBasicBlockRef b_dead;
+	LLVMBasicBlockRef *attfindstartblocks;
 	LLVMBasicBlockRef *attcheckattnoblocks;
 	LLVMBasicBlockRef *attstartblocks;
 	LLVMBasicBlockRef *attisnullblocks;
@@ -156,6 +157,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 	b = LLVMCreateBuilderInContext(lc);
 
+	attfindstartblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
 	attcheckattnoblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
 	attstartblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
 	attisnullblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
@@ -300,6 +302,8 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	/* build the basic block for each attribute, need them as jump target */
 	for (attnum = 0; attnum < natts; attnum++)
 	{
+		attfindstartblocks[attnum] =
+			l_bb_append_v(v_deform_fn, "block.attr.%d.attfindstartblocks", attnum);
 		attcheckattnoblocks[attnum] =
 			l_bb_append_v(v_deform_fn, "block.attr.%d.attcheckattno", attnum);
 		attstartblocks[attnum] =
@@ -359,6 +363,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	LLVMPositionBuilderAtEnd(b, b_find_start);
 
 	v_nvalid = l_load(b, LLVMInt16TypeInContext(lc), v_nvalidp, "");
+	LLVMBuildBr(b, attfindstartblocks[0]);
 
 	/*
 	 * Build switch to go from nvalid to the right startblock.  Callers
@@ -366,22 +371,24 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	 * avoid this check when it's known that the slot is empty (e.g. in scan
 	 * nodes).
 	 */
-	if (true)
+	for (attnum = 0; attnum < natts; attnum++)
 	{
-		LLVMValueRef v_switch = LLVMBuildSwitch(b, v_nvalid,
-												b_dead, natts);
+		LLVMBasicBlockRef else_block;
+		LLVMValueRef v_attnum_eq;
+		LLVMPositionBuilderAtEnd(b, attfindstartblocks[attnum]);
+		v_attnum_eq = LLVMBuildICmp(b, LLVMIntEQ,
+						   v_nvalid,
+						   l_int16_const(lc, attnum),
+						   "attnum_eq");
 
-		for (attnum = 0; attnum < natts; attnum++)
-		{
-			LLVMValueRef v_attno = l_int16_const(lc, attnum);
+		if (attnum == natts - 1)
+			else_block = b_dead;
+		else
+			else_block = attfindstartblocks[attnum+1];
 
-			LLVMAddCase(v_switch, v_attno, attcheckattnoblocks[attnum]);
-		}
-	}
-	else
-	{
-		/* jump from entry block to first block */
-		LLVMBuildBr(b, attcheckattnoblocks[0]);
+		LLVMBuildCondBr(b, v_attnum_eq,
+				  attcheckattnoblocks[attnum],
+				  else_block);
 	}
 
 	LLVMPositionBuilderAtEnd(b, b_dead);
