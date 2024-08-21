@@ -45,10 +45,10 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 	LLVMBasicBlockRef b_entry;
 	LLVMBasicBlockRef b_adjust_unavail_cols;
-	LLVMBasicBlockRef b_find_start;
 
 	LLVMBasicBlockRef b_out;
 	LLVMBasicBlockRef b_dead;
+	LLVMBasicBlockRef *attfindstartblocks;
 	LLVMBasicBlockRef *attcheckattnoblocks;
 	LLVMBasicBlockRef *attstartblocks;
 	LLVMBasicBlockRef *attisnullblocks;
@@ -147,8 +147,6 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 		LLVMAppendBasicBlockInContext(lc, v_deform_fn, "entry");
 	b_adjust_unavail_cols =
 		LLVMAppendBasicBlockInContext(lc, v_deform_fn, "adjust_unavail_cols");
-	b_find_start =
-		LLVMAppendBasicBlockInContext(lc, v_deform_fn, "find_startblock");
 	b_out =
 		LLVMAppendBasicBlockInContext(lc, v_deform_fn, "outblock");
 	b_dead =
@@ -156,6 +154,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 	b = LLVMCreateBuilderInContext(lc);
 
+	attfindstartblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
 	attcheckattnoblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
 	attstartblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
 	attisnullblocks = palloc(sizeof(LLVMBasicBlockRef) * natts);
@@ -301,6 +300,8 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	/* build the basic block for each attribute, need them as jump target */
 	for (attnum = 0; attnum < natts; attnum++)
 	{
+		attfindstartblocks[attnum] =
+			l_bb_append_v(v_deform_fn, "block.attr.%d.attfindstartblocks", attnum);
 		attcheckattnoblocks[attnum] =
 			l_bb_append_v(v_deform_fn, "block.attr.%d.attcheckattno", attnum);
 		attstartblocks[attnum] =
@@ -328,7 +329,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 		/* just skip through unnecessary blocks */
 		LLVMBuildBr(b, b_adjust_unavail_cols);
 		LLVMPositionBuilderAtEnd(b, b_adjust_unavail_cols);
-		LLVMBuildBr(b, b_find_start);
+		LLVMBuildBr(b, attfindstartblocks[0]);
 	}
 	else
 	{
@@ -342,7 +343,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 									  l_int16_const(lc, natts),
 									  ""),
 						b_adjust_unavail_cols,
-						b_find_start);
+						attfindstartblocks[0]);
 
 		/* if not, memset tts_isnull of relevant cols to true */
 		LLVMPositionBuilderAtEnd(b, b_adjust_unavail_cols);
@@ -354,12 +355,8 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 		l_call(b,
 			   LLVMGetFunctionType(f), f,
 			   v_params, lengthof(v_params), "");
-		LLVMBuildBr(b, b_find_start);
+		LLVMBuildBr(b, attfindstartblocks[0]);
 	}
-
-	LLVMPositionBuilderAtEnd(b, b_find_start);
-
-	v_nvalid = l_load(b, LLVMInt16TypeInContext(lc), v_nvalidp, "");
 
 	/*
 	 * Build switch to go from nvalid to the right startblock.  Callers
@@ -367,23 +364,25 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	 * avoid this check when it's known that the slot is empty (e.g. in scan
 	 * nodes).
 	 */
-	if (true)
+	for (attnum = 0; attnum < natts; attnum++)
 	{
-		LLVMValueRef v_switch = LLVMBuildSwitch(b, v_nvalid,
-												b_dead, natts);
+		LLVMBasicBlockRef else_block;
+		LLVMValueRef v_attnum_eq;
+		LLVMPositionBuilderAtEnd(b, attfindstartblocks[attnum]);
+		v_nvalid = l_load(b, LLVMInt16TypeInContext(lc), v_nvalidp, "");
+		v_attnum_eq = LLVMBuildICmp(b, LLVMIntEQ,
+						   v_nvalid,
+						   l_int16_const(lc, attnum),
+						   "attnum_eq");
 
-		for (attnum = 0; attnum < natts; attnum++)
-		{
-			LLVMValueRef v_attno = l_int16_const(lc, attnum);
+		if (attnum == natts - 1)
+			else_block = b_dead;
+		else
+			else_block = attfindstartblocks[attnum+1];
 
-			LLVMAddCase(v_switch, v_attno, attcheckattnoblocks[attnum]);
-		}
-
-	}
-	else
-	{
-		/* jump from entry block to first block */
-		LLVMBuildBr(b, attcheckattnoblocks[0]);
+		LLVMBuildCondBr(b, v_attnum_eq,
+				  attcheckattnoblocks[attnum],
+				  else_block);
 	}
 
 	LLVMPositionBuilderAtEnd(b, b_dead);
