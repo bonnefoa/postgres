@@ -71,6 +71,8 @@ else
 	COMPILER_FLAGS="$CPPFLAGS $CFLAGS"
 fi
 
+echo "Compiler flags: $COMPILER_FLAGS"
+
 # Create temp directory.
 tmp=`mktemp -d /tmp/$me.XXXXXX`
 
