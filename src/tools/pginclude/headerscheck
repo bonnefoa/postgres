@@ -241,6 +241,8 @@ do
 		EXTRAINCLUDES="" ;;
 	esac
 
+    test "$f" = src/include/jit/llvmjit_emit.h && set -x
+
 	# Run the test.
 	if ! $COMPILER $COMPILER_FLAGS -I $builddir -I $srcdir \
 		-I $builddir/src/include -I $srcdir/src/include \
