@@ -80,6 +80,11 @@ typedef enum UpperRelationKind
 	/* NB: UPPERREL_FINAL must be last enum entry; it's used to size arrays */
 } UpperRelationKind;
 
+typedef enum NullsOrder
+{
+	NULLS_FIRST, NULLS_LAST, NO_NULLS
+}			NullsOrder;
+
 /*----------
  * PlannerGlobal
  *		Global information for planning/optimization
@@ -1474,7 +1479,7 @@ typedef struct PathKey
 	EquivalenceClass *pk_eclass pg_node_attr(copy_as_scalar, equal_as_scalar);
 	Oid			pk_opfamily;	/* btree opfamily defining the ordering */
 	int			pk_strategy;	/* sort direction (ASC or DESC) */
-	bool		pk_nulls_first; /* do NULLs come before normal values? */
+	NullsOrder	pk_nulls_order; /* do NULLs come before normal values? */
 } PathKey;
 
 /*

@@ -191,7 +191,7 @@ static void deparseRangeTblRef(StringInfo buf, PlannerInfo *root,
 							   List **additional_conds, List **params_list);
 static void deparseAggref(Aggref *node, deparse_expr_cxt *context);
 static void appendGroupByClause(List *tlist, deparse_expr_cxt *context);
-static void appendOrderBySuffix(Oid sortop, Oid sortcoltype, bool nulls_first,
+static void appendOrderBySuffix(Oid sortop, Oid sortcoltype, NullsOrder nulls_order,
 								deparse_expr_cxt *context);
 static void appendAggOrderBy(List *orderList, List *targetList,
 							 deparse_expr_cxt *context);
@@ -3775,7 +3775,7 @@ appendAggOrderBy(List *orderList, List *targetList, deparse_expr_cxt *context)
  * of an ORDER BY clause.
  */
 static void
-appendOrderBySuffix(Oid sortop, Oid sortcoltype, bool nulls_first,
+appendOrderBySuffix(Oid sortop, Oid sortcoltype, NullsOrder nulls_order,
 					deparse_expr_cxt *context)
 {
 	StringInfo	buf = context->buf;
@@ -3805,9 +3805,9 @@ appendOrderBySuffix(Oid sortop, Oid sortcoltype, bool nulls_first,
 		ReleaseSysCache(opertup);
 	}
 
-	if (nulls_first)
+	if (nulls_order == NULLS_FIRST)
 		appendStringInfoString(buf, " NULLS FIRST");
-	else
+	else if (nulls_order == NULLS_LAST)
 		appendStringInfoString(buf, " NULLS LAST");
 }
 
@@ -3991,7 +3991,7 @@ appendOrderByClause(List *pathkeys, bool has_final_sort,
 		 * whether the desired operator will be the default or not.
 		 */
 		appendOrderBySuffix(oprid, exprType((Node *) em_expr),
-							pathkey->pk_nulls_first, context);
+							pathkey->pk_nulls_order, context);
 
 	}
 	reset_transmission_modes(nestlevel);

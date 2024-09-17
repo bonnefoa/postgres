@@ -55,7 +55,7 @@ static bool right_merge_direction(PlannerInfo *root, PathKey *pathkey);
 PathKey *
 make_canonical_pathkey(PlannerInfo *root,
 					   EquivalenceClass *eclass, Oid opfamily,
-					   int strategy, bool nulls_first)
+					   int strategy, NullsOrder nulls_order)
 {
 	PathKey    *pk;
 	ListCell   *lc;
@@ -75,7 +75,7 @@ make_canonical_pathkey(PlannerInfo *root,
 		if (eclass == pk->pk_eclass &&
 			opfamily == pk->pk_opfamily &&
 			strategy == pk->pk_strategy &&
-			nulls_first == pk->pk_nulls_first)
+			nulls_order == pk->pk_nulls_order)
 			return pk;
 	}
 
@@ -89,7 +89,7 @@ make_canonical_pathkey(PlannerInfo *root,
 	pk->pk_eclass = eclass;
 	pk->pk_opfamily = opfamily;
 	pk->pk_strategy = strategy;
-	pk->pk_nulls_first = nulls_first;
+	pk->pk_nulls_order = nulls_order;
 
 	root->canon_pathkeys = lappend(root->canon_pathkeys, pk);
 
@@ -201,7 +201,7 @@ make_pathkey_from_sortinfo(PlannerInfo *root,
 						   Oid opcintype,
 						   Oid collation,
 						   bool reverse_sort,
-						   bool nulls_first,
+						   NullsOrder nulls_order,
 						   Index sortref,
 						   Relids rel,
 						   bool create_it)
@@ -242,7 +242,7 @@ make_pathkey_from_sortinfo(PlannerInfo *root,
 
 	/* And finally we can find or create a PathKey node */
 	return make_canonical_pathkey(root, eclass, opfamily,
-								  strategy, nulls_first);
+								  strategy, nulls_order);
 }
 
 /*
@@ -256,7 +256,7 @@ static PathKey *
 make_pathkey_from_sortop(PlannerInfo *root,
 						 Expr *expr,
 						 Oid ordering_op,
-						 bool nulls_first,
+						 NullsOrder nulls_order,
 						 Index sortref,
 						 bool create_it)
 {
@@ -280,7 +280,7 @@ make_pathkey_from_sortop(PlannerInfo *root,
 									  opcintype,
 									  collation,
 									  (strategy == BTGreaterStrategyNumber),
-									  nulls_first,
+									  nulls_order,
 									  sortref,
 									  NULL,
 									  create_it);
@@ -753,7 +753,7 @@ build_index_pathkeys(PlannerInfo *root,
 		TargetEntry *indextle = (TargetEntry *) lfirst(lc);
 		Expr	   *indexkey;
 		bool		reverse_sort;
-		bool		nulls_first;
+		NullsOrder	nulls_order;
 		PathKey    *cpathkey;
 
 		/*
@@ -769,13 +769,16 @@ build_index_pathkeys(PlannerInfo *root,
 		if (ScanDirectionIsBackward(scandir))
 		{
 			reverse_sort = !index->reverse_sort[i];
-			nulls_first = !index->nulls_first[i];
+			nulls_order = !index->nulls_first[i] ? NULLS_FIRST : NULLS_LAST;
 		}
 		else
 		{
 			reverse_sort = index->reverse_sort[i];
-			nulls_first = index->nulls_first[i];
+			nulls_order = index->nulls_first[i] ? NULLS_FIRST : NULLS_LAST;
 		}
+
+		if (expr_is_nonnullable(root, indexkey))
+			nulls_order = NO_NULLS;
 
 		/*
 		 * OK, try to make a canonical pathkey for this sort key.
@@ -786,7 +789,7 @@ build_index_pathkeys(PlannerInfo *root,
 											  index->opcintype[i],
 											  index->indexcollations[i],
 											  reverse_sort,
-											  nulls_first,
+											  nulls_order,
 											  0,
 											  index->rel->relids,
 											  false);
@@ -1118,7 +1121,7 @@ convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
 											   outer_ec,
 											   sub_pathkey->pk_opfamily,
 											   sub_pathkey->pk_strategy,
-											   sub_pathkey->pk_nulls_first);
+											   sub_pathkey->pk_nulls_order);
 			}
 		}
 		else
@@ -1200,7 +1203,7 @@ convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
 													  outer_ec,
 													  sub_pathkey->pk_opfamily,
 													  sub_pathkey->pk_strategy,
-													  sub_pathkey->pk_nulls_first);
+													  sub_pathkey->pk_nulls_order);
 					/* score = # of equivalence peers */
 					score = list_length(outer_ec->ec_members) - 1;
 					/* +1 if it matches the proper query_pathkeys item */
@@ -1393,6 +1396,7 @@ make_pathkeys_for_sortclauses_extended(PlannerInfo *root,
 		SortGroupClause *sortcl = (SortGroupClause *) lfirst(l);
 		Expr	   *sortkey;
 		PathKey    *pathkey;
+		NullsOrder	nulls_order;
 
 		sortkey = (Expr *) get_sortgroupclause_expr(sortcl, tlist);
 		if (!OidIsValid(sortcl->sortop))
@@ -1408,10 +1412,15 @@ make_pathkeys_for_sortclauses_extended(PlannerInfo *root,
 									  bms_make_singleton(root->group_rtindex),
 									  NULL);
 		}
+		if (expr_is_nonnullable(root, sortkey))
+			nulls_order = NO_NULLS;
+		else
+			nulls_order = sortcl->nulls_first ? NULLS_FIRST : NULLS_LAST;
+
 		pathkey = make_pathkey_from_sortop(root,
 										   sortkey,
 										   sortcl->sortop,
-										   sortcl->nulls_first,
+										   nulls_order,
 										   sortcl->tleSortGroupRef,
 										   true);
 		if (pathkey->pk_eclass->ec_sortref == 0 && set_ec_sortref)
@@ -1908,7 +1917,7 @@ make_inner_pathkeys_for_merge(PlannerInfo *root,
 											 ieclass,
 											 opathkey->pk_opfamily,
 											 opathkey->pk_strategy,
-											 opathkey->pk_nulls_first);
+											 opathkey->pk_nulls_order);
 
 		/*
 		 * Don't generate redundant pathkeys (which can happen if multiple
