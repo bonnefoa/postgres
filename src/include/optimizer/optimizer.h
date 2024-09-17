@@ -121,6 +121,8 @@ extern Expr *expression_planner_with_deps(Expr *expr,
 										  List **relationOids,
 										  List **invalItems);
 
+extern bool expr_is_nonnullable(PlannerInfo *root, Expr *expr);
+
 extern bool plan_cluster_use_sort(Oid tableOid, Oid indexOid);
 extern int	plan_create_index_workers(Oid tableOid, Oid indexOid);
 

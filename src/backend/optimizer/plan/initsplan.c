@@ -2696,7 +2696,7 @@ add_base_clause_to_rel(PlannerInfo *root, Index relid,
  * If the Expr is a simple Var that is defined NOT NULL and meanwhile is not
  * nulled by any outer joins, then we can know that it cannot be NULL.
  */
-static bool
+bool
 expr_is_nonnullable(PlannerInfo *root, Expr *expr)
 {
 	RelOptInfo *rel;
