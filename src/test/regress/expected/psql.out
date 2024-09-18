@@ -132,6 +132,14 @@ SELECT $1, $2 \parse stmt3
  foo      | bar
 (1 row)
 
+-- Check multiple calls to bind_named
+\bind_named test
+\bind_named
+\bind_named: missing required argument
+\g
+ERROR:  there is no parameter $1
+LINE 1: SELECT $1, $2 
+               ^
 -- \close (extended query protocol)
 \close
 \close: missing required argument

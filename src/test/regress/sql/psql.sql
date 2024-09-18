@@ -59,6 +59,11 @@ SELECT $1, $2 \parse stmt3
 \bind_named stmt2 'foo' \g
 \bind_named stmt3 'foo' 'bar' \g
 
+-- Check multiple calls to bind_named
+\bind_named test
+\bind_named
+\g
+
 -- \close (extended query protocol)
 \close
 \close ''
