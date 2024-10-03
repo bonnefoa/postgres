@@ -271,6 +271,44 @@ SELECT toplevel, calls, query FROM pg_stat_statements
  t        |     1 | SELECT pg_stat_statements_reset() IS NOT NULL AS t
 (2 rows)
 
+-- Create Materialized View, all-level tracking.
+SET pg_stat_statements.track = 'all';
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+ t 
+---
+ t
+(1 row)
+
+CREATE MATERIALIZED VIEW pgss_materialized_view AS SELECT * FROM generate_series(1, 5) as id;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+ toplevel | calls |                                             query                                              
+----------+-------+------------------------------------------------------------------------------------------------
+ t        |     1 | CREATE MATERIALIZED VIEW pgss_materialized_view AS SELECT * FROM generate_series($1, $2) as id
+ f        |     1 | SELECT * FROM generate_series($1, $2) as id;
+ t        |     1 | SELECT pg_stat_statements_reset() IS NOT NULL AS t
+(3 rows)
+
+-- Refresh Materialized View, all-level tracking.
+SET pg_stat_statements.track = 'all';
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+ t 
+---
+ t
+(1 row)
+
+REFRESH MATERIALIZED VIEW pgss_materialized_view;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+ toplevel | calls |                                   query                                   
+----------+-------+---------------------------------------------------------------------------
+ t        |     1 | REFRESH MATERIALIZED VIEW pgss_materialized_view
+ f        |     1 | SELECT * FROM pg_catalog.pg_rewrite WHERE ev_class = $1 AND rulename = $2
+ f        |     1 | SELECT id                                                                +
+          |       |    FROM generate_series(1, 5) id(id);
+ t        |     1 | SELECT pg_stat_statements_reset() IS NOT NULL AS t
+(4 rows)
+
 -- Create Table As, all-level tracking.
 SET pg_stat_statements.track = 'all';
 SELECT pg_stat_statements_reset() IS NOT NULL AS t;

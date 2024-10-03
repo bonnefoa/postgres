@@ -81,6 +81,20 @@ CALL proc_with_utility_stmt();
 SELECT toplevel, calls, query FROM pg_stat_statements
   ORDER BY query COLLATE "C", toplevel;
 
+-- Create Materialized View, all-level tracking.
+SET pg_stat_statements.track = 'all';
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+CREATE MATERIALIZED VIEW pgss_materialized_view AS SELECT * FROM generate_series(1, 5) as id;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
+-- Refresh Materialized View, all-level tracking.
+SET pg_stat_statements.track = 'all';
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+REFRESH MATERIALIZED VIEW pgss_materialized_view;
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+
 -- Create Table As, all-level tracking.
 SET pg_stat_statements.track = 'all';
 SELECT pg_stat_statements_reset() IS NOT NULL AS t;
