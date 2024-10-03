@@ -118,6 +118,8 @@ transformMergeStmt(ParseState *pstate, MergeStmt *stmt)
 	Assert(pstate->p_ctenamespace == NIL);
 
 	qry->commandType = CMD_MERGE;
+	qry->stmt_location = stmt->location;
+	qry->stmt_len = pstate->p_stmt_len - (stmt->location - pstate->p_stmt_location);
 	qry->hasRecursive = false;
 
 	/* process the WITH clause independently of all else */

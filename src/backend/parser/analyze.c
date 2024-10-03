@@ -113,6 +113,8 @@ parse_analyze_fixedparams(RawStmt *parseTree, const char *sourceText,
 	Assert(sourceText != NULL); /* required as of 8.4 */
 
 	pstate->p_sourcetext = sourceText;
+	pstate->p_stmt_len = parseTree->stmt_len;
+	pstate->p_stmt_location = parseTree->stmt_location;
 
 	if (numParams > 0)
 		setup_parse_fixed_parameters(pstate, paramTypes, numParams);
@@ -153,6 +155,8 @@ parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
 	Assert(sourceText != NULL); /* required as of 8.4 */
 
 	pstate->p_sourcetext = sourceText;
+	pstate->p_stmt_len = parseTree->stmt_len;
+	pstate->p_stmt_location = parseTree->stmt_location;
 
 	setup_parse_variable_parameters(pstate, paramTypes, numParams);
 
@@ -195,6 +199,8 @@ parse_analyze_withcb(RawStmt *parseTree, const char *sourceText,
 	Assert(sourceText != NULL); /* required as of 8.4 */
 
 	pstate->p_sourcetext = sourceText;
+	pstate->p_stmt_len = parseTree->stmt_len;
+	pstate->p_stmt_location = parseTree->stmt_location;
 	pstate->p_queryEnv = queryEnv;
 	(*parserSetup) (pstate, parserSetupArg);
 
@@ -518,6 +524,8 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	Node	   *qual;
 
 	qry->commandType = CMD_DELETE;
+	qry->stmt_location = stmt->location;
+	qry->stmt_len = pstate->p_stmt_len - (stmt->location - pstate->p_stmt_location);
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
@@ -606,6 +614,8 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 	Assert(pstate->p_ctenamespace == NIL);
 
 	qry->commandType = CMD_INSERT;
+	qry->stmt_location = stmt->location;
+	qry->stmt_len = pstate->p_stmt_len - (stmt->location - pstate->p_stmt_location);
 	pstate->p_is_insert = true;
 
 	/* process the WITH clause independently of all else */
@@ -1347,6 +1357,21 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 	ListCell   *l;
 
 	qry->commandType = CMD_SELECT;
+	qry->stmt_location = stmt->location;
+	if (stmt->stmt_len > 0)
+
+		/*
+		 * If the select statement is within parentheses, stmt_len will be set
+		 * and represent the length of the select within parentheses
+		 */
+		qry->stmt_len = stmt->stmt_len;
+	else
+
+		/*
+		 * Otherwise, we fallback to computing the length from the
+		 * ParseState's length and location
+		 */
+		qry->stmt_len = pstate->p_stmt_len - (stmt->location - pstate->p_stmt_location);
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
@@ -1730,6 +1755,8 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 	int			tllen;
 
 	qry->commandType = CMD_SELECT;
+	qry->stmt_location = stmt->location;
+	qry->stmt_len = pstate->p_stmt_len - (stmt->location - pstate->p_stmt_location);
 
 	/*
 	 * Find leftmost leaf SelectStmt.  We currently only need to do this in
@@ -2429,6 +2456,8 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	Node	   *qual;
 
 	qry->commandType = CMD_UPDATE;
+	qry->stmt_location = stmt->location;
+	qry->stmt_len = pstate->p_stmt_len - (stmt->location - pstate->p_stmt_location);
 	pstate->p_is_insert = false;
 
 	/* process the WITH clause independently of all else */
