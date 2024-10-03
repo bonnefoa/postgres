@@ -32,6 +32,32 @@ BEGIN
 END; $$;
 SELECT toplevel, calls, query FROM pg_stat_statements
   ORDER BY query COLLATE "C", toplevel;
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+
+-- Explain - all-level tracking.
+SET pg_stat_statements.track = 'all';
+explain (costs off) SELECT 1;
+explain (costs off) UPDATE stats_track_tab SET x=1 WHERE x=1;
+explain (costs off) DELETE FROM stats_track_tab;
+explain (costs off) INSERT INTO stats_track_tab VALUES ((1));
+explain (costs off) MERGE INTO stats_track_tab USING (SELECT id FROM generate_series(1, 10) id) ON x = id
+    WHEN MATCHED THEN UPDATE SET x = id
+    WHEN NOT MATCHED THEN INSERT (x) VALUES (id);
+explain (costs off) SELECT 1 UNION SELECT 2;
+
+-- Check we correctly capture substring with CTE
+explain (costs off) WITH a AS (select 4) SELECT 1;
+explain (costs off) WITH a AS (select 4) UPDATE stats_track_tab SET x=1 WHERE x=1;
+explain (costs off) WITH a AS (select 4) DELETE FROM stats_track_tab;
+explain (costs off) WITH a AS (select 4) INSERT INTO stats_track_tab VALUES ((1));
+explain (costs off) WITH a AS (select 4) MERGE INTO stats_track_tab USING (SELECT id FROM generate_series(1, 10) id) ON x = id
+    WHEN MATCHED THEN UPDATE SET x = id
+    WHEN NOT MATCHED THEN INSERT (x) VALUES (id);
+explain (costs off) WITH a AS (select 4) SELECT 1 UNION SELECT 2;
+
+SELECT toplevel, calls, query FROM pg_stat_statements
+  ORDER BY query COLLATE "C", toplevel;
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- Procedure with multiple utility statements.
 CREATE OR REPLACE PROCEDURE proc_with_utility_stmt()

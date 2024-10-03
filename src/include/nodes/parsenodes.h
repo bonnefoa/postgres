@@ -2045,6 +2045,7 @@ typedef struct InsertStmt
 	List	   *returningList;	/* list of expressions to return */
 	WithClause *withClause;		/* WITH clause */
 	OverridingKind override;	/* OVERRIDING clause */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } InsertStmt;
 
 /* ----------------------
@@ -2059,6 +2060,7 @@ typedef struct DeleteStmt
 	Node	   *whereClause;	/* qualifications */
 	List	   *returningList;	/* list of expressions to return */
 	WithClause *withClause;		/* WITH clause */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } DeleteStmt;
 
 /* ----------------------
@@ -2074,6 +2076,7 @@ typedef struct UpdateStmt
 	List	   *fromClause;		/* optional from clause for more tables */
 	List	   *returningList;	/* list of expressions to return */
 	WithClause *withClause;		/* WITH clause */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } UpdateStmt;
 
 /* ----------------------
@@ -2089,6 +2092,7 @@ typedef struct MergeStmt
 	List	   *mergeWhenClauses;	/* list of MergeWhenClause(es) */
 	List	   *returningList;	/* list of expressions to return */
 	WithClause *withClause;		/* WITH clause */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } MergeStmt;
 
 /* ----------------------
@@ -2158,6 +2162,7 @@ typedef struct SelectStmt
 	bool		all;			/* ALL specified? */
 	struct SelectStmt *larg;	/* left child */
 	struct SelectStmt *rarg;	/* right child */
+	ParseLoc	location;		/* name's token location */
 	/* Eventually add fields for CORRESPONDING spec here */
 } SelectStmt;
 

@@ -118,6 +118,7 @@ transformMergeStmt(ParseState *pstate, MergeStmt *stmt)
 	Assert(pstate->p_ctenamespace == NIL);
 
 	qry->commandType = CMD_MERGE;
+	qry->stmt_location = stmt->location;
 	qry->hasRecursive = false;
 
 	/* process the WITH clause independently of all else */
@@ -130,6 +131,7 @@ transformMergeStmt(ParseState *pstate, MergeStmt *stmt)
 
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
+		qry->stmt_location = stmt->withClause->location;
 	}
 
 	/*

@@ -518,6 +518,7 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	Node	   *qual;
 
 	qry->commandType = CMD_DELETE;
+	qry->stmt_location = stmt->location;
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
@@ -525,6 +526,7 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 		qry->hasRecursive = stmt->withClause->recursive;
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
+		qry->stmt_location = stmt->withClause->location;
 	}
 
 	/* set up range table with just the result rel */
@@ -606,6 +608,7 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 	Assert(pstate->p_ctenamespace == NIL);
 
 	qry->commandType = CMD_INSERT;
+	qry->stmt_location = stmt->location;
 	pstate->p_is_insert = true;
 
 	/* process the WITH clause independently of all else */
@@ -614,6 +617,7 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 		qry->hasRecursive = stmt->withClause->recursive;
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
+		qry->stmt_location = stmt->withClause->location;
 	}
 
 	qry->override = stmt->override;
@@ -1347,6 +1351,7 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 	ListCell   *l;
 
 	qry->commandType = CMD_SELECT;
+	qry->stmt_location = stmt->location;
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
@@ -1354,6 +1359,7 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 		qry->hasRecursive = stmt->withClause->recursive;
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
+		qry->stmt_location = stmt->withClause->location;
 	}
 
 	/* Complain if we get called from someplace where INTO is not allowed */
@@ -1730,6 +1736,7 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 	int			tllen;
 
 	qry->commandType = CMD_SELECT;
+	qry->stmt_location = stmt->location;
 
 	/*
 	 * Find leftmost leaf SelectStmt.  We currently only need to do this in
@@ -1784,6 +1791,7 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 		qry->hasRecursive = withClause->recursive;
 		qry->cteList = transformWithClause(pstate, withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
+		qry->stmt_location = withClause->location;
 	}
 
 	/*
@@ -2429,6 +2437,7 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	Node	   *qual;
 
 	qry->commandType = CMD_UPDATE;
+	qry->stmt_location = stmt->location;
 	pstate->p_is_insert = false;
 
 	/* process the WITH clause independently of all else */
@@ -2437,6 +2446,7 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 		qry->hasRecursive = stmt->withClause->recursive;
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
+		qry->stmt_location = stmt->withClause->location;
 	}
 
 	qry->resultRelation = setTargetTable(pstate, stmt->relation,

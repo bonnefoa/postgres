@@ -190,7 +190,7 @@ static void insertSelectOptions(SelectStmt *stmt,
 								SelectLimit *limitClause,
 								WithClause *withClause,
 								core_yyscan_t yyscanner);
-static Node *makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
+static Node *makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg, int location);
 static Node *doNegate(Node *n, int location);
 static void doNegateFloat(Float *v);
 static Node *makeAndExpr(Node *lexpr, Node *rexpr, int location);
@@ -12170,6 +12170,7 @@ InsertStmt:
 					$5->onConflictClause = $6;
 					$5->returningList = $7;
 					$5->withClause = $1;
+					$5->location = @2;
 					$$ = (Node *) $5;
 				}
 		;
@@ -12323,6 +12324,7 @@ DeleteStmt: opt_with_clause DELETE_P FROM relation_expr_opt_alias
 					n->whereClause = $6;
 					n->returningList = $7;
 					n->withClause = $1;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
 		;
@@ -12397,6 +12399,7 @@ UpdateStmt: opt_with_clause UPDATE relation_expr_opt_alias
 					n->whereClause = $7;
 					n->returningList = $8;
 					n->withClause = $1;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
 		;
@@ -12474,6 +12477,7 @@ MergeStmt:
 					m->joinCondition = $8;
 					m->mergeWhenClauses = $9;
 					m->returningList = $10;
+					m->location = @2;
 
 					$$ = (Node *) m;
 				}
@@ -12836,6 +12840,7 @@ simple_select:
 					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
+					n->location = @1;
 					$$ = (Node *) n;
 				}
 			| SELECT distinct_clause target_list
@@ -12853,6 +12858,7 @@ simple_select:
 					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
+					n->location = @1;
 					$$ = (Node *) n;
 				}
 			| values_clause							{ $$ = $1; }
@@ -12877,15 +12883,15 @@ simple_select:
 				}
 			| select_clause UNION set_quantifier select_clause
 				{
-					$$ = makeSetOp(SETOP_UNION, $3 == SET_QUANTIFIER_ALL, $1, $4);
+					$$ = makeSetOp(SETOP_UNION, $3 == SET_QUANTIFIER_ALL, $1, $4, @1);
 				}
 			| select_clause INTERSECT set_quantifier select_clause
 				{
-					$$ = makeSetOp(SETOP_INTERSECT, $3 == SET_QUANTIFIER_ALL, $1, $4);
+					$$ = makeSetOp(SETOP_INTERSECT, $3 == SET_QUANTIFIER_ALL, $1, $4, @1);
 				}
 			| select_clause EXCEPT set_quantifier select_clause
 				{
-					$$ = makeSetOp(SETOP_EXCEPT, $3 == SET_QUANTIFIER_ALL, $1, $4);
+					$$ = makeSetOp(SETOP_EXCEPT, $3 == SET_QUANTIFIER_ALL, $1, $4, @1);
 				}
 		;
 
@@ -18967,7 +18973,7 @@ insertSelectOptions(SelectStmt *stmt,
 }
 
 static Node *
-makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
+makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg, int location)
 {
 	SelectStmt *n = makeNode(SelectStmt);
 
@@ -18975,6 +18981,7 @@ makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
 	n->all = all;
 	n->larg = (SelectStmt *) larg;
 	n->rarg = (SelectStmt *) rarg;
+	n->location = location;
 	return (Node *) n;
 }
 
