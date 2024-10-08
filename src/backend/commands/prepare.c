@@ -77,8 +77,37 @@ PrepareQuery(ParseState *pstate, PrepareStmt *stmt,
 	 */
 	rawstmt = makeNode(RawStmt);
 	rawstmt->stmt = stmt->query;
-	rawstmt->stmt_location = stmt_location;
-	rawstmt->stmt_len = stmt_len;
+
+	switch (nodeTag(stmt->query))
+	{
+		case T_InsertStmt:
+			rawstmt->stmt_location = ((InsertStmt *) stmt->query)->location;
+			break;
+		case T_DeleteStmt:
+			rawstmt->stmt_location = ((DeleteStmt *) stmt->query)->location;
+			break;
+		case T_UpdateStmt:
+			rawstmt->stmt_location = ((UpdateStmt *) stmt->query)->location;
+			break;
+		case T_MergeStmt:
+			rawstmt->stmt_location = ((MergeStmt *) stmt->query)->location;
+			break;
+		case T_SelectStmt:
+			rawstmt->stmt_location = ((SelectStmt *) stmt->query)->location;
+			rawstmt->stmt_len = ((SelectStmt *) stmt->query)->stmt_len;
+			break;
+		default:
+			elog(ERROR, "unexpected node type: %d", (int) nodeTag(stmt->query));
+			break;
+	}
+
+	/*
+	 * stmt_len will be defined for SelectStmt within parentheses. If it's
+	 * defined, use it. Otherwise, we need to compute the new length based on
+	 * the new statement location and the initial location+length.
+	 */
+	if (stmt_len > 0 && rawstmt->stmt_len == 0)
+		rawstmt->stmt_len = stmt_len - (rawstmt->stmt_location - stmt_location);
 
 	/*
 	 * Create the CachedPlanSource before we do parse analysis, since it needs

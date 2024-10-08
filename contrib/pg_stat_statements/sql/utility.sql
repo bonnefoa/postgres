@@ -270,6 +270,10 @@ EXECUTE stat_select (1);
 DEALLOCATE stat_select;
 PREPARE stat_select AS SELECT $1 AS a;
 EXECUTE stat_select (2);
+PREPARE stat_select_2 AS SELECT $1, $2 AS a\; PREPARE stat_select_3 AS SELECT $1, $2, $3 AS a;
+EXECUTE stat_select_2 (2, 3);
+EXECUTE stat_select_3 (2, 3, 4);
+
 DEALLOCATE PREPARE stat_select;
 DEALLOCATE ALL;
 DEALLOCATE PREPARE ALL;

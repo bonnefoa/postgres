@@ -532,6 +532,19 @@ EXECUTE stat_select (2);
  2
 (1 row)
 
+PREPARE stat_select_2 AS SELECT $1, $2 AS a\; PREPARE stat_select_3 AS SELECT $1, $2, $3 AS a;
+EXECUTE stat_select_2 (2, 3);
+ ?column? | a 
+----------+---
+ 2        | 3
+(1 row)
+
+EXECUTE stat_select_3 (2, 3, 4);
+ ?column? | ?column? | a 
+----------+----------+---
+ 2        | 3        | 4
+(1 row)
+
 DEALLOCATE PREPARE stat_select;
 DEALLOCATE ALL;
 DEALLOCATE PREPARE ALL;
@@ -540,10 +553,12 @@ SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
 -------+------+----------------------------------------------------
      2 |    0 | DEALLOCATE $1
      2 |    0 | DEALLOCATE ALL
-     2 |    2 | PREPARE stat_select AS SELECT $1 AS a
+     2 |    2 | SELECT $1 AS a
      1 |    1 | SELECT $1 as a
+     1 |    1 | SELECT $1, $2 AS a
+     1 |    1 | SELECT $1, $2, $3 AS a
      1 |    1 | SELECT pg_stat_statements_reset() IS NOT NULL AS t
-(5 rows)
+(7 rows)
 
 SELECT pg_stat_statements_reset() IS NOT NULL AS t;
  t 

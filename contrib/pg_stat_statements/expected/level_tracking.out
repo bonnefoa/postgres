@@ -886,8 +886,8 @@ SELECT toplevel, calls, query FROM pg_stat_statements
  t        |     1 | CREATE TEMPORARY TABLE pgss_ctas_1 AS SELECT $1
  t        |     1 | CREATE TEMPORARY TABLE pgss_ctas_2 AS EXECUTE test_prepare_pgss
  t        |     1 | SELECT pg_stat_statements_reset() IS NOT NULL AS t
- f        |     1 | PREPARE test_prepare_pgss AS select generate_series($1, $2)
  f        |     1 | SELECT $1
+ f        |     1 | select generate_series($1, $2)
 (5 rows)
 
 -- Create Table As, top-level tracking.
