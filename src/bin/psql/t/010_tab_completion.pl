@@ -415,6 +415,11 @@ check_completion("blarg \t\t", qr//, "check completion failure path");
 
 clear_query();
 
+# check word completion without match code path
+check_completion("z\t\t", qr//, "check completion failure path");
+
+clear_query();
+
 # check COPY FROM with DEFAULT option
 check_completion(
 	"COPY foo FROM stdin WITH ( DEF\t)",
