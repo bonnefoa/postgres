@@ -24,6 +24,9 @@
 #include <llvm-c/Orc.h>
 #include <llvm-c/OrcEE.h>
 #include <llvm-c/LLJIT.h>
+#if LLVM_VERSION_MAJOR >= 22
+#include <llvm-c/LLJITUtils.h>
+#endif
 #include <llvm-c/Support.h>
 #include <llvm-c/Target.h>
 #if LLVM_VERSION_MAJOR < 17
@@ -34,7 +37,9 @@
 #endif
 
 #include "jit/llvmjit.h"
+#if LLVM_VERSION_MAJOR < 22
 #include "jit/llvmjit_backport.h"
+#endif
 #include "jit/llvmjit_emit.h"
 #include "miscadmin.h"
 #include "portability/instr_time.h"
@@ -1136,6 +1141,7 @@ llvm_resolve_symbols(LLVMOrcDefinitionGeneratorRef GeneratorObj, void *Ctx,
 
 		LLVMOrcRetainSymbolStringPoolEntry(LookupSet[i].Name);
 		symbols[i].Name = LookupSet[i].Name;
+
 		symbols[i].Sym.Address = llvm_resolve_symbol(name, NULL);
 		symbols[i].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
 	}
@@ -1172,12 +1178,22 @@ llvm_log_jit_error(void *ctx, LLVMErrorRef error)
 static LLVMOrcObjectLayerRef
 llvm_create_object_layer(void *Ctx, LLVMOrcExecutionSessionRef ES, const char *Triple)
 {
-#ifdef USE_LLVM_BACKPORT_SECTION_MEMORY_MANAGER
-	LLVMOrcObjectLayerRef objlayer =
-		LLVMOrcCreateRTDyldObjectLinkingLayerWithSafeSectionMemoryManager(ES);
+	LLVMOrcObjectLayerRef objlayer;
+
+#if LLVM_VERSION_MAJOR >= 22
+	LLVMErrorRef error =
+		LLVMOrcCreateObjectLinkingLayerWithInProcessMemoryManager(&objlayer, ES);
+
+	if (error)
+		elog(FATAL, "could not create LLVM ObjectLinkingLayer: %s",
+			 llvm_error_message(error));
+
 #else
-	LLVMOrcObjectLayerRef objlayer =
-		LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(ES);
+
+#ifdef USE_LLVM_BACKPORT_SECTION_MEMORY_MANAGER
+	objlayer = LLVMOrcCreateRTDyldObjectLinkingLayerWithSafeSectionMemoryManager(ES);
+#else
+	objlayer = LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(ES);
 #endif
 
 	if (jit_debugging_support)
@@ -1194,6 +1210,8 @@ llvm_create_object_layer(void *Ctx, LLVMOrcExecutionSessionRef ES, const char *T
 		if (l)
 			LLVMOrcRTDyldObjectLinkingLayerRegisterJITEventListener(objlayer, l);
 	}
+
+#endif
 
 	return objlayer;
 }
@@ -1224,6 +1242,19 @@ llvm_create_jit_instance(LLVMTargetMachineRef tm)
 	if (error)
 		elog(ERROR, "failed to create lljit instance: %s",
 			 llvm_error_message(error));
+
+#if LLVM_VERSION_MAJOR >= 22
+	if (jit_debugging_support)
+	{
+		LLVMOrcLLJITEnableDebugSupport(lljit);
+	}
+
+	if (jit_profiling_support)
+	{
+    // This requires llvm with https://github.com/bonnefoa/llvm-project/tree/jitlink-perf
+		LLVMOrcLLJITEnablePerfSupport(lljit);
+	}
+#endif
 
 	LLVMOrcExecutionSessionSetErrorReporter(LLVMOrcLLJITGetExecutionSession(lljit),
 											llvm_log_jit_error, NULL);
