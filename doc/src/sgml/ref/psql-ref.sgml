@@ -3562,6 +3562,65 @@ testdb=&gt; <userinput>\setenv LESS -imx4F</userinput>
         </listitem>
       </varlistentry>
 
+     <varlistentry id="app-psql-meta-command-pipeline">
+      <term><literal>\startpipeline</literal></term>
+      <term><literal>\syncpipeline</literal></term>
+      <term><literal>\endpipeline</literal></term>
+
+      <listitem>
+        <para>
+          This group of commands implements pipelining of SQL statements.
+          A pipeline must begin with a <command>\startpipeline</command>
+          and end with an <command>\endpipeline</command>. In between there
+          may be any number of <command>\syncpipeline</command> commands,
+          which sends a <link linkend="protocol-flow-ext-query">sync message</link>
+          without ending the ongoing pipeline and flushing the send buffer.
+          In pipeline mode, statements are sent to the server without waiting
+          for the results of previous statements.  See
+          <xref linkend="libpq-pipeline-mode"/> for more details.
+       </para>
+
+        <para>
+          Pipeline mode requires the use of extended query protocol. All queries need
+          to be sent using the meta-commands <literal>\bind</literal>,
+          <literal>\bind_named</literal>, <literal>\close</literal> or
+          <literal>\parse</literal>. While a pipeline is ongoing,
+          <literal>\g</literal> will append the current query buffer to the pipeline and
+          other meta-commands like <literal>\gx</literal> or <literal>\gdesc</literal>
+          are not allowed in pipeline mode.
+       </para>
+
+        <para>
+       </para>
+
+       <para>
+        Example:
+<programlisting>
+\startpipeline
+-- Pipe a Parse, Bind and Execute of "SELECT 1"
+SELECT 1 \bind \g
+-- Pipe a Parse of "SELECT $1", storing the result in the prepared statement 'stmt1'
+SELECT $1 \parse stmt1
+-- Pipe a Bind and Execute of prepared statement 'stmt1' with parameter 1
+\bind_named stmt1 1 \g
+-- Pipe a Parse, Bind and Execute of SELECT pg_current_xact_id()
+SELECT pg_current_xact_id() \bind \g
+-- Pipe a synchronisation point. This will commit the implicit transaction
+-- block started by the pipeline
+\syncpipeline
+-- Pipe a Parse, Bind and Execute of SELECT pg_current_xact_id()
+-- This will display a different xid as a new transaction block
+-- was started after \syncpipeline
+SELECT pg_current_xact_id() \bind \g
+-- Pipe a Close of the prepared statement stmt1
+\close stmt1
+-- End the pipeline, sending all piped commands to the server and process the results
+\endpipeline
+</programlisting></para>
+
+      </listitem>
+     </varlistentry>
+
 
       <varlistentry id="app-psql-meta-command-t-lc">
         <term><literal>\t</literal></term>

@@ -1929,3 +1929,179 @@ CREATE TABLE defprivs (a int);
 \z defprivs
 \pset null ''
 DROP TABLE defprivs;
+
+-- pipelining
+CREATE TABLE psql_pipeline(a INTEGER, s TEXT);
+
+-- single query
+\startpipeline
+SELECT $1 \bind 'val1' \g
+\endpipeline
+
+-- multiple queries
+\startpipeline
+SELECT $1 \bind 'val1' \g
+SELECT $1, $2 \bind 'val2' 'val3' \g
+SELECT $1, $2 \bind 'val2' 'val3' \g
+\endpipeline
+
+-- send multiple syncs
+\startpipeline
+SELECT $1 \bind 'val1' \g
+\syncpipeline
+\syncpipeline
+SELECT $1, $2 \bind 'val2' 'val3' \g
+\syncpipeline
+SELECT $1, $2 \bind 'val4' 'val5' \g
+\endpipeline
+
+-- startpipeline shouldn't have any effect if already in a pipeline
+\startpipeline
+\startpipeline
+SELECT $1 \bind 'val1' \g
+\endpipeline
+
+-- COPY FROM STDIN
+\startpipeline
+SELECT $1 \bind 'val1' \g
+COPY psql_pipeline FROM STDIN \bind \g
+\endpipeline
+1	test
+2	test2
+\.
+
+-- COPY TO STDOUT
+\startpipeline
+SELECT $1 \bind 'val1' \g
+copy psql_pipeline TO STDOUT \bind \g
+SELECT $1 \bind 'val2' \g
+\endpipeline
+
+-- Use \parse and \bind_named
+\startpipeline
+SELECT $1 \parse ''
+SELECT $1, $2 \parse ''
+SELECT $2 \parse pipeline_1
+\bind_named '' 1 2 \g
+\bind_named pipeline_1 2 \g
+\endpipeline
+
+-- pipelining errors
+
+-- endpipeline outside of pipeline should fail
+\endpipeline
+
+-- Query using simple protocol should not be sent and should leave the pipeline usable
+\startpipeline
+SELECT 1;
+SELECT $1 \bind 'val1' \g
+\endpipeline
+
+-- Incorrect number of parameters, the pipeline will be aborted and following queries won't be executed
+\startpipeline
+SELECT \bind 'val1' \g
+SELECT $1 \bind 'val1' \g
+\endpipeline
+
+-- watch sends query as a simple query which won't be allowed within a pipeline
+\startpipeline
+SELECT \bind \g
+\watch 1
+\endpipeline
+
+-- \gdesc should fail as synchronous commands are not allowed in pipeline, pipeline should still be usable
+\startpipeline
+SELECT $1 \bind 1 \gdesc
+SELECT $1 \bind 1 \g
+\endpipeline
+
+-- \gset is not allowed, pipeline should still be usable
+\startpipeline
+SELECT $1 as i, $2 as j \parse ''
+SELECT $1 as k, $2 as l \parse 'second'
+\bind_named '' 1 2 \gset
+\bind_named second 1 2 \gset pref02_ \echo :pref02_i :pref02_j
+\bind_named '' 1 2 \g
+\endpipeline
+
+-- \gx is not allowed, pipeline should still be usable
+\startpipeline
+SELECT $1 \bind 1 \gx
+\reset
+SELECT $1 \bind 1 \g
+\endpipeline
+
+-- \gexec is not allowed, pipeline should still be usable
+\startpipeline
+SELECT 'INSERT INTO psql_pipeline(a) SELECT generate_series(1, 10)' \parse 'insert_stmt'
+\bind_named insert_stmt \gexec
+\bind_named insert_stmt \g
+SELECT COUNT(*) FROM psql_pipeline \bind \g
+\endpipeline
+
+-- pipelining and transaction block behaviour
+
+-- set local will issue a warning when modifying a GUC outside of a transaction block
+-- The change will still be valid as a pipeline runs within an implicit transaction block
+-- Sending a sync will commit the implicit transaction block. The first command after a sync
+-- won't be seen as belonging to a pipeline.
+\startpipeline
+SET LOCAL statement_timeout='1h' \bind \g
+SHOW statement_timeout \bind \g
+\syncpipeline
+SHOW statement_timeout \bind \g
+SET LOCAL statement_timeout='2h' \bind \g
+SHOW statement_timeout \bind \g
+\endpipeline
+
+-- Reindex concurrently is forbidden in the middle of a pipeline
+\startpipeline
+SELECT $1 \bind 1 \g
+REINDEX TABLE CONCURRENTLY psql_pipeline \bind \g
+SELECT $1 \bind 2 \g
+\endpipeline
+
+-- Reindex concurrently will work if it's the first command of a pipeline
+\startpipeline
+REINDEX TABLE CONCURRENTLY psql_pipeline \bind \g
+SELECT $1 \bind 2 \g
+\endpipeline
+
+-- subtransactions are not allowed in pipeline mode
+\startpipeline
+SAVEPOINT a \bind \g
+SELECT $1 \bind 1 \g
+ROLLBACK TO SAVEPOINT a \bind \g
+SELECT $1 \bind 2 \g
+\endpipeline
+
+-- Lock command will fail as first pipeline command is not seen as a transaction block
+\startpipeline
+LOCK psql_pipeline \bind \g
+SELECT $1 \bind 2 \g
+\endpipeline
+
+-- Lock command will succeed after the first command as pipeline will be seen as an implicit transaction block
+\startpipeline
+SELECT $1 \bind 1 \g
+LOCK psql_pipeline \bind \g
+SELECT $1 \bind 2 \g
+\endpipeline
+
+-- Vacuum command will work as the first command
+\startpipeline
+VACUUM psql_pipeline \bind \g
+\endpipeline
+
+-- Vacuum command will fail within pipeline implicit transaction
+\startpipeline
+SELECT 1 \bind \g
+VACUUM psql_pipeline \bind \g
+\endpipeline
+
+-- Vacuum command will work after a sync
+\startpipeline
+SELECT 1 \bind \g
+\syncpipeline
+VACUUM psql_pipeline \bind \g
+\endpipeline

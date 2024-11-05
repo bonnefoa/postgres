@@ -69,6 +69,9 @@ typedef enum
 	PSQL_SEND_EXTENDED_PARSE,
 	PSQL_SEND_EXTENDED_QUERY_PARAMS,
 	PSQL_SEND_EXTENDED_QUERY_PREPARED,
+	PSQL_SEND_PIPELINE_SYNC,
+	PSQL_START_PIPELINE_MODE,
+	PSQL_END_PIPELINE_MODE,
 } PSQL_SEND_MODE;
 
 typedef enum
@@ -108,6 +111,7 @@ typedef struct _psqlSettings
 	PSQL_SEND_MODE send_mode;	/* one-shot request to send query with normal
 								 * or extended query protocol */
 	int			bind_nparams;	/* number of parameters */
+	int			num_syncs;		/* number of ongoing syncs */
 	char	  **bind_params;	/* parameters for extended query protocol call */
 	char	   *stmtName;		/* prepared statement name used for extended
 								 * query protocol commands */

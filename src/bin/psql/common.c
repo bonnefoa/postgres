@@ -415,6 +415,8 @@ AcceptResult(const PGresult *result, bool show_error)
 			case PGRES_EMPTY_QUERY:
 			case PGRES_COPY_IN:
 			case PGRES_COPY_OUT:
+			case PGRES_PIPELINE_SYNC:
+			case PGRES_PIPELINE_ABORTED:
 				/* Fine, do nothing */
 				OK = true;
 				break;
@@ -1451,6 +1453,7 @@ ExecQueryAndProcessResults(const char *query,
 	bool		timing = pset.timing;
 	bool		success = false;
 	bool		return_early = false;
+	bool		process_pipeline = false;
 	instr_time	before,
 				after;
 	PGresult   *result;
@@ -1484,6 +1487,21 @@ ExecQueryAndProcessResults(const char *query,
 										  (const char *const *) pset.bind_params,
 										  NULL, NULL, 0);
 			break;
+		case PSQL_START_PIPELINE_MODE:
+			success = PQenterPipelineMode(pset.db);
+			break;
+		case PSQL_END_PIPELINE_MODE:
+			success = PQpipelineSync(pset.db);
+			/* End of the pipeline, all queued commands need to be processed */
+			process_pipeline = true;
+			if (success)
+				pset.num_syncs++;
+			break;
+		case PSQL_SEND_PIPELINE_SYNC:
+			success = PQsendPipelineSync(pset.db);
+			if (success)
+				pset.num_syncs++;
+			break;
 		case PSQL_SEND_QUERY:
 			success = PQsendQuery(pset.db, query);
 			break;
@@ -1499,6 +1517,12 @@ ExecQueryAndProcessResults(const char *query,
 		CheckConnection();
 
 		return -1;
+	}
+
+	if (!process_pipeline && PQpipelineStatus(pset.db) == PQ_PIPELINE_ON)
+	{
+		/* We're in a pipeline and haven't received a pipeline end yet, exit */
+		return 0;
 	}
 
 	/*
@@ -1585,6 +1609,17 @@ ExecQueryAndProcessResults(const char *query,
 				 * ignore manually.
 				 */
 				result = NULL;
+			else if (process_pipeline)
+			{
+				/*
+				 * In pipeline mode, a NULL result is returned to notify the
+				 * next query is being processed. We need to consume it and
+				 * get the next result.
+				 */
+				result = PQgetResult(pset.db);
+				Assert(result == NULL);
+				result = PQgetResult(pset.db);
+			}
 			else
 				result = PQgetResult(pset.db);
 
@@ -1771,12 +1806,32 @@ ExecQueryAndProcessResults(const char *query,
 			}
 		}
 
+		if (result_status == PGRES_PIPELINE_SYNC)
+		{
+			/* We have a sync response, decrease the sync counter */
+			pset.num_syncs--;
+			/* If all syncs were processed, exit pipeline mode */
+			if (pset.num_syncs <= 0)
+				success &= PQexitPipelineMode(pset.db);
+		}
+
 		/*
 		 * Check PQgetResult() again.  In the typical case of a single-command
 		 * string, it will return NULL.  Otherwise, we'll have other results
 		 * to process.  We need to do that to check whether this is the last.
 		 */
 		next_result = PQgetResult(pset.db);
+		if (process_pipeline && result_status != PGRES_PIPELINE_SYNC)
+		{
+			/*
+			 * In pipeline mode, a NULL result indicates the end of the
+			 * current query being processed. We need to call PQgetResult a
+			 * second time to move to the next response.
+			 */
+			Assert(next_result == NULL);
+			next_result = PQgetResult(pset.db);
+		}
+
 		last = (next_result == NULL);
 
 		/*
@@ -1798,8 +1853,12 @@ ExecQueryAndProcessResults(const char *query,
 			*elapsed_msec = INSTR_TIME_GET_MILLISEC(after);
 		}
 
-		/* this may or may not print something depending on settings */
-		if (result != NULL)
+		/*
+		 * This may or may not print something depending on settings. A
+		 * pipeline sync will have a non null result but doesn't have anything
+		 * to print, thus we ignore them
+		 */
+		if (result != NULL && result_status != PGRES_PIPELINE_SYNC)
 		{
 			/*
 			 * If results need to be printed into the file specified by \g,
@@ -1836,6 +1895,9 @@ ExecQueryAndProcessResults(const char *query,
 
 	/* close \g file if we opened it */
 	CloseGOutput(gfile_fout, gfile_is_pipe);
+
+	/* After query process, pipeline numsyncs should be 0 */
+	Assert(pset.num_syncs == 0);
 
 	/* may need this to recover from conn loss during COPY */
 	if (!CheckConnection())
@@ -2296,6 +2358,9 @@ clean_extended_state(void)
 			free(pset.stmtName);
 			pset.bind_params = NULL;
 			break;
+		case PSQL_START_PIPELINE_MODE:	/* \startpipeline */
+		case PSQL_END_PIPELINE_MODE:	/* \endpipeline */
+		case PSQL_SEND_PIPELINE_SYNC:	/* \syncpipeline */
 		case PSQL_SEND_QUERY:
 			break;
 	}
