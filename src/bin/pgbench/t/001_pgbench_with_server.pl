@@ -968,6 +968,150 @@ $node->pgbench(
 }
 	});
 
+# set local as first pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[],
+	[qr{WARNING:  SET LOCAL can only be used in transaction blocks}],
+	'set local outside of pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_1' => q{
+\startpipeline
+SET LOCAL statement_timeout='1h';
+\endpipeline
+}
+	});
+
+# set local as second pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[],
+	[qr{^$}],
+	'set local within pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_2' => q{
+\startpipeline
+SELECT 1;
+SET LOCAL statement_timeout='1h';
+\endpipeline
+}
+	});
+
+# Reindex concurrently as first pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[],
+	[],
+	'Reindex concurrently outside pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_3' => q{
+\startpipeline
+REINDEX TABLE CONCURRENTLY pgbench_accounts;
+SELECT 1;
+\endpipeline
+}
+	});
+
+# Reindex concurrently as second pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[],
+	'error: reindex concurrently within pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_4' => q{
+\startpipeline
+SELECT 1;
+REINDEX TABLE CONCURRENTLY pgbench_accounts;
+\endpipeline
+}
+	});
+
+# Subtransactions are not allowed in pipeline
+$node->pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[],
+	'error: subtransactions are not allowed in pipeline',
+	{
+		'001_pgbench_pipeline_tx_block_5' => q{
+\startpipeline
+SAVEPOINT a;
+SELECT 1;
+ROLLBACK TO SAVEPOINT a;
+SELECT 2;
+\endpipeline
+}
+	});
+
+# Lock table as first pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[],
+	'error: lock table outside of pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_6' => q{
+\startpipeline
+LOCK pgbench_accounts;
+SELECT 1;
+\endpipeline
+}
+	});
+
+# Lock table as second pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[],
+	[],
+	'lock table within pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_7' => q{
+\startpipeline
+SELECT 1;
+LOCK pgbench_accounts;
+\endpipeline
+}
+	});
+
+# Vacuum table as first pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[],
+	[],
+	'vacuum table outside pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_8' => q{
+\startpipeline
+VACUUM pgbench_accounts;
+\endpipeline
+}
+	});
+
+# Vacuum table as second pipeline command
+$node->pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[],
+	'error: vacuum table within pipeline implicit transaction block',
+	{
+		'001_pgbench_pipeline_tx_block_9' => q{
+\startpipeline
+SELECT 1;
+VACUUM pgbench_accounts;
+\endpipeline
+}
+	});
+
 # Working \startpipeline in prepared query mode with serializable
 $node->pgbench(
 	'-c4 -t 10 -n -M prepared',
