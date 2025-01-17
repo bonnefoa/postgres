@@ -7,6 +7,7 @@
 use strict;
 use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::PgProto;
 use PostgreSQL::Test::Utils;
 use Test::More;
 
@@ -84,6 +85,7 @@ SKIP:
 	for (my $i = 0; $i <= 20; $i++)
 	{
 		my $sock = $node->raw_connect();
+		my $pgproto = PostgreSQL::Test::PgProto->new($sock);
 
 		# On a busy system, the server might reject connections if
 		# postmaster cannot accept() them fast enough. The exact limit
@@ -93,14 +95,10 @@ SKIP:
 		# when it does so, we know that the backend has been launched
 		# and we should be able to open another connection.
 
-		# SSLRequest packet consists of packet length followed by
-		# NEGOTIATE_SSL_CODE.
-		my $negotiate_ssl_code = pack("Nnn", 8, 1234, 5679);
-		my $sent = $sock->send($negotiate_ssl_code);
+		$pgproto->send_ssl_request();
 
 		# Read reply. We expect the server to reject it with 'N'
-		my $reply = "";
-		$sock->recv($reply, 1);
+		my $reply = $pgproto->read_type();
 		is($reply, "N", "dead-end connection $i");
 
 		push(@raw_connections, $sock);
