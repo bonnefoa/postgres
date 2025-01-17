@@ -184,6 +184,9 @@ static void drop_unnamed_stmt(void);
 static void log_disconnections(int code, Datum arg);
 static void enable_statement_timeout(void);
 static void disable_statement_timeout(void);
+static void ProcessRecoveryConflictInterrupts(void);
+static bool CheckBlockedWriteConflictInterrupts(ProcSignalReason *triggered_reason);
+static int	errdetail_recovery_conflict(ProcSignalReason reason);
 
 
 /* ----------------------------------------------------------------
@@ -540,49 +543,97 @@ ProcessClientReadInterrupt(bool blocked)
  * 'blocked' is true if no data could be written and we plan to retry,
  * false if about to write or done writing.
  *
+ * Return true if write is retryable.
+ *
  * Must preserve errno!
  */
-void
+bool
 ProcessClientWriteInterrupt(bool blocked)
 {
 	int			save_errno = errno;
+	bool		retryable = true;
+	bool		can_process_interrupts = InterruptHoldoffCount == 0 && CritSectionCount == 0;
+	bool		conflict_with_recovery = false;
+	ProcSignalReason reason;
 
-	if (ProcDiePending)
+	if (blocked && RecoveryConflictPending)
+	{
+		conflict_with_recovery = CheckBlockedWriteConflictInterrupts(&reason);
+	}
+
+	if (!blocked && ProcDiePending)
 	{
 		/*
-		 * We're dying.  If it's not possible to write, then we should handle
-		 * that immediately, else a stuck client could indefinitely delay our
-		 * response to the signal.  If we haven't tried to write yet, make
-		 * sure the process latch is set, so that if the write would block
-		 * then we'll come back here and die.  If we're done writing, also
-		 * make sure the process latch is set, as we might've undesirably
-		 * cleared it while writing.
+		 * We're dying and we haven't tried to write yet, make sure the
+		 * process latch is set, so that if the write would block then we'll
+		 * come back here and die.  If we're done writing, also make sure the
+		 * process latch is set, as we might've undesirably cleared it while
+		 * writing.
 		 */
-		if (blocked)
+		SetLatch(MyLatch);
+	}
+	else if (blocked && !can_process_interrupts && conflict_with_recovery)
+	{
+		/*
+		 * We have a blocking write conflicting with recovery but interrupts
+		 * can't be processed. This can happen when sending errors to errors
+		 * and saturating the socket buffer. This will make the blocking write
+		 * fail, triggering a "could not send data to client" error and
+		 * closing the socket. Since the socket error will supersede the
+		 * recovery conflict, we need to log the recovery conflict now.
+		 */
+		pgstat_report_recovery_conflict(reason);
+		ereport(COMMERROR,
+				(errcode(reason == PROCSIG_RECOVERY_CONFLICT_DATABASE ?
+						 ERRCODE_DATABASE_DROPPED :
+						 ERRCODE_T_R_SERIALIZATION_FAILURE),
+				 errmsg("Interrupting blocking write due to conflict with recovery"),
+				 errdetail_recovery_conflict(reason)));
+
+		retryable = false;
+	}
+	else if (blocked && can_process_interrupts && (ProcDiePending || conflict_with_recovery))
+	{
+		/*
+		 * Don't mess with whereToSendOutput if ProcessInterrupts wouldn't
+		 * service ProcDiePending.
+		 *
+		 * We don't want to send the client the error message, as a) that
+		 * would possibly block again, and b) it would likely lead to loss of
+		 * protocol sync because we may have already sent a partial protocol
+		 * message.
+		 */
+		if (whereToSendOutput == DestRemote)
+			whereToSendOutput = DestNone;
+		if (ProcDiePending)
 		{
 			/*
-			 * Don't mess with whereToSendOutput if ProcessInterrupts wouldn't
-			 * service ProcDiePending.
+			 * We're dying and it's not possible to write so we should handle
+			 * that immediately, else a stuck client could indefinitely delay
+			 * our response to the signal.
 			 */
-			if (InterruptHoldoffCount == 0 && CritSectionCount == 0)
-			{
-				/*
-				 * We don't want to send the client the error message, as a)
-				 * that would possibly block again, and b) it would likely
-				 * lead to loss of protocol sync because we may have already
-				 * sent a partial protocol message.
-				 */
-				if (whereToSendOutput == DestRemote)
-					whereToSendOutput = DestNone;
-
-				CHECK_FOR_INTERRUPTS();
-			}
+			CHECK_FOR_INTERRUPTS();
 		}
 		else
-			SetLatch(MyLatch);
+		{
+			/*
+			 * As we're in a blocked write, we can't keep protocol sync.
+			 * Upgrade
+			 */
+			ExitOnAnyError = true;
+			ProcessRecoveryConflictInterrupts();
+		}
+
+		/*
+		 * Both ProcDiePending and ProcessRecoveryConflictInterrupts should
+		 * exit as interrupts can be processed and we checked that we did
+		 * conflict with recovery
+		 */
+		pg_unreachable();
 	}
 
 	errno = save_errno;
+	return retryable;
 }
 
 /*
@@ -3225,6 +3276,64 @@ ProcessRecoveryConflictInterrupt(ProcSignalReason reason)
 		default:
 			elog(FATAL, "unrecognized conflict mode: %d", (int) reason);
 	}
+}
+
+/*
+ * Check if a blocked write conflict with a specific conflict reason.
+ */
+static bool
+CheckBlockedWriteConflictInterrupt(ProcSignalReason reason)
+{
+	switch (reason)
+	{
+		case PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK:
+			/* Blocked writes can't be waiting for a lock */
+			return false;
+		case PROCSIG_RECOVERY_CONFLICT_BUFFERPIN:
+			return HoldingBufferPinThatDelaysRecovery();
+		case PROCSIG_RECOVERY_CONFLICT_LOCK:
+		case PROCSIG_RECOVERY_CONFLICT_TABLESPACE:
+		case PROCSIG_RECOVERY_CONFLICT_SNAPSHOT:
+			return IsTransactionOrTransactionBlock();
+		case PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT:
+
+			/*
+			 * If we're not in a subtransaction and the transaction was
+			 * already aborted, we don't block the recovery.
+			 */
+			return IsSubTransaction() || !IsAbortedTransactionBlockState();
+		case PROCSIG_RECOVERY_CONFLICT_DATABASE:
+			return true;
+		default:
+			elog(COMMERROR, "unrecognized conflict mode %d", (int) reason);
+			return true;
+	}
+}
+
+/*
+ * Check if the blocked write conflict with any conflict reason.
+ *
+ * If log_conflict is true, the recovery conflict will be logged and reported in the stats.
+ */
+static bool
+CheckBlockedWriteConflictInterrupts(ProcSignalReason *triggered_reason)
+{
+	Assert(RecoveryConflictPending);
+
+	for (ProcSignalReason reason = PROCSIG_RECOVERY_CONFLICT_FIRST;
+		 reason <= PROCSIG_RECOVERY_CONFLICT_LAST;
+		 reason++)
+	{
+		if (RecoveryConflictPendingReasons[reason])
+		{
+			if (CheckBlockedWriteConflictInterrupt(reason))
+			{
+				*triggered_reason = reason;
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 /*

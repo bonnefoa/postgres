@@ -7,8 +7,10 @@
 use strict;
 use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::PgProto;
 use PostgreSQL::Test::Utils;
 use Test::More;
+use Time::HiRes qw(usleep);
 
 
 # Set up nodes
@@ -74,25 +76,10 @@ my $expected_conflicts = 0;
 
 ## RECOVERY CONFLICT 1: Buffer pin conflict
 my $sect = "buffer pin conflict";
+my $cursor1 = "test_recovery_conflict_cursor";
 $expected_conflicts++;
 
-# Aborted INSERT on primary that will be cleaned up by vacuum. Has to be old
-# enough so that there's not a snapshot conflict before the buffer pin
-# conflict.
-
-$node_primary->safe_psql(
-	$test_db,
-	qq[
-	BEGIN;
-	INSERT INTO $table1 VALUES (1,0);
-	ROLLBACK;
-	-- ensure flush, rollback doesn't do so
-	BEGIN; LOCK $table1; COMMIT;
-	]);
-
-$node_primary->wait_for_replay_catchup($node_standby);
-
-my $cursor1 = "test_recovery_conflict_cursor";
+setup_bufferpin_conflict();
 
 # DECLARE and use a cursor on standby, causing buffer with the only block of
 # the relation to be pinned on the standby
@@ -120,8 +107,94 @@ $node_primary->wait_for_replay_catchup($node_standby);
 
 check_conflict_log("User was holding shared buffer pin for too long");
 $psql_standby->reconnect_and_clear();
-check_conflict_stat("bufferpin");
+check_conflict_stat("bufferpin", 1);
 
+SKIP:
+{
+	skip "those tests require working raw_connect()"
+		unless $node_standby->raw_connect_works();
+
+	## RECOVERY CONFLICT 1 bis: Buffer pin conflict with conflicting query in ClientWrite
+	$sect = "buffer pin conflict (ClientWrite)";
+	$expected_conflicts++;
+
+	setup_bufferpin_conflict();
+
+	# The simplest way to get the user to use for the startup packet
+	# is to grab it from an existing psql session
+	my $user = $psql_standby->query_safe("SELECT current_user");
+
+	# Start the conflicting session
+	my $sock = $node_standby->raw_connect();
+	my $pgproto = PostgreSQL::Test::PgProto->new($sock);
+	my %parameters = ( user => $user, database => $test_db, application_name => $ENV{PGAPPNAME} );
+
+	$pgproto->send_startup_message(\%parameters);
+	# Read until Ready For Query message
+	$pgproto->read_until_message('Z');
+	my $pid = $pgproto->read_session_pid();
+
+	# We want the session to pin table1's block while staying in a ClientWrite
+	# state. To achieve that, we ask the server enough rows to saturate the
+	# buffer with the client not read those results.
+	$pgproto->send_simple_query(qq[
+			BEGIN;
+			DECLARE $cursor1 CURSOR FOR SELECT b FROM $table1;
+			FETCH FORWARD FROM $cursor1;
+			SELECT generate_series(1, 100000);
+		]);
+
+	# Check that our session is in ClientWrite
+	wait_for_wait_event($pid, 'ClientWrite');
+
+	# VACUUM FREEZE on the primary
+	$node_primary->safe_psql($test_db, qq[VACUUM FREEZE $table1;]);
+
+	check_conflict_log("User was holding shared buffer pin for too long");
+
+	# The conflicting session should be terminated, consume everything until the socket is closed.
+	$pgproto->wait_until_closed();
+
+	check_conflict_stat("bufferpin", 2);
+
+	## RECOVERY CONFLICT 1 ter: Buffer pin conflict with conflicting query reports
+	## an error and saturate socket buffer
+	$sect = "buffer pin conflict (Error report)";
+	$expected_conflicts++;
+
+	setup_bufferpin_conflict();
+
+	# Start the conflicting session
+	$sock = $node_standby->raw_connect();
+	$pgproto = PostgreSQL::Test::PgProto->new($sock);
+
+	$pgproto->send_startup_message(\%parameters);
+	# Read until Ready For Query message
+	$pgproto->read_until_message('Z');
+	$pid = $pgproto->read_session_pid();
+
+	# We want the session to pin table1's block while staying in a ClientWrite
+	# state and reporting an error to the client.
+	$pgproto->send_simple_query(qq[
+			BEGIN;
+			DECLARE $cursor1 CURSOR FOR SELECT b FROM $table1;
+			FETCH FORWARD FROM $cursor1;
+			DO \$\$BEGIN RAISE 'endless scream: %', repeat('a', 2000000); END;\$\$;
+		]);
+
+	# Check that our session is in ClientWrite
+	wait_for_wait_event($pid, 'ClientWrite');
+
+	# VACUUM FREEZE on the primary
+	$node_primary->safe_psql($test_db, qq[VACUUM FREEZE $table1;]);
+
+	check_conflict_log("User was holding shared buffer pin for too long");
+
+	# The conflicting session should be terminated, consume everything until the socket is closed.
+	$pgproto->wait_until_closed();
+
+	check_conflict_stat("bufferpin", 3);
+}
 
 ## RECOVERY CONFLICT 2: Snapshot conflict
 $sect = "snapshot conflict";
@@ -153,7 +226,7 @@ $node_primary->wait_for_replay_catchup($node_standby);
 check_conflict_log(
 	"User query might have needed to see row versions that must be removed");
 $psql_standby->reconnect_and_clear();
-check_conflict_stat("snapshot");
+check_conflict_stat("snapshot", 1);
 
 
 ## RECOVERY CONFLICT 3: Lock conflict
@@ -176,7 +249,7 @@ $node_primary->wait_for_replay_catchup($node_standby);
 
 check_conflict_log("User was holding a relation lock for too long");
 $psql_standby->reconnect_and_clear();
-check_conflict_stat("lock");
+check_conflict_stat("lock", 1);
 
 
 ## RECOVERY CONFLICT 4: Tablespace conflict
@@ -206,7 +279,7 @@ $node_primary->wait_for_replay_catchup($node_standby);
 check_conflict_log(
 	"User was or might have been using tablespace that must be dropped");
 $psql_standby->reconnect_and_clear();
-check_conflict_stat("tablespace");
+check_conflict_stat("tablespace", 1);
 
 
 ## RECOVERY CONFLICT 5: Deadlock
@@ -271,7 +344,7 @@ $node_primary->wait_for_replay_catchup($node_standby);
 
 check_conflict_log("User transaction caused buffer deadlock with recovery.");
 $psql_standby->reconnect_and_clear();
-check_conflict_stat("deadlock");
+check_conflict_stat("deadlock", 1);
 
 # clean up for next tests
 $node_primary->safe_psql($test_db, qq[ROLLBACK PREPARED 'lock';]);
@@ -310,6 +383,22 @@ $node_primary->stop();
 
 done_testing();
 
+sub setup_bufferpin_conflict
+{
+	# Aborted INSERT on primary that will be cleaned up by vacuum. Has to be old
+	# enough so that there's not a snapshot conflict before the buffer pin
+	# conflict.
+	$node_primary->safe_psql($test_db,
+		qq[BEGIN;
+			INSERT INTO $table1 VALUES (1,0);
+			ROLLBACK;
+			-- ensure flush, rollback doesn't do so
+			BEGIN; LOCK $table1; COMMIT;]
+	);
+
+	$node_primary->wait_for_replay_catchup($node_standby);
+}
+
 sub check_conflict_log
 {
 	my $message = shift;
@@ -318,16 +407,45 @@ sub check_conflict_log
 	$log_location = $node_standby->wait_for_log(qr/$message/, $log_location);
 
 	cmp_ok($log_location, '>', $old_log_location,
-		"$sect: logfile contains terminated connection due to recovery conflict"
+		"$sect: logfile contains '$message'"
 	);
 }
 
 sub check_conflict_stat
 {
 	my $conflict_type = shift;
+	my $expected_count = shift;
 	my $count = $node_standby->safe_psql($test_db,
 		qq[SELECT confl_$conflict_type FROM pg_stat_database_conflicts WHERE datname='$test_db';]
 	);
 
-	is($count, 1, "$sect: stats show conflict on standby");
+	is($count, $expected_count, "$sect: stats show $count conflicts on standby (expected $expected_count)");
+}
+
+sub wait_for_wait_event
+{
+	my $pid = shift;
+	my $expected_wait_event = shift;
+
+	my $max_attempts = 10 * $PostgreSQL::Test::Utils::timeout_default;
+	my $attempts = 0;
+	my $wait_event = "";
+
+	while ($attempts < $max_attempts)
+	{
+		$wait_event = $node_standby->safe_psql($test_db,
+			qq[SELECT wait_event FROM pg_stat_activity WHERE pid=$pid;]
+		);
+
+		if ($wait_event eq $expected_wait_event) {
+			last;
+		}
+
+		# Wait 0.1 second before retrying.
+		usleep(100_000);
+
+		$attempts++;
+	}
+
+	is($wait_event, $expected_wait_event, "$sect: session with pid $pid has wait_event $wait_event");
 }

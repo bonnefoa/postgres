@@ -306,6 +306,7 @@ secure_write(Port *port, void *ptr, size_t len)
 {
 	ssize_t		n;
 	int			waitfor;
+	bool		retryable = true;
 
 	/* Deal with any already-pending interrupt condition. */
 	ProcessClientWriteInterrupt(false);
@@ -353,14 +354,28 @@ retry:
 		if (event.events & WL_LATCH_SET)
 		{
 			ResetLatch(MyLatch);
-			ProcessClientWriteInterrupt(true);
-
-			/*
-			 * We'll retry the write. Most likely it will return immediately
-			 * because there's still no buffer space available, and we'll wait
-			 * for the socket to become ready again.
-			 */
+			retryable = ProcessClientWriteInterrupt(true);
+			if (!retryable)
+			{
+				/*
+				 * The blocking write is interfering with recovery but
+				 * ProcessClientWriteInterrupt can't process interrupts. This
+				 * can happen when trying to send error messages to the client
+				 * and saturating the buffer. To dislodge ourself, we give up
+				 * retrying with a socket error. This will close the
+				 * connection with a "connection to client lost" error during
+				 * the next CHECK_FOR_INTERRUPTS.
+				 */
+				errno = ENOBUFS;
+				return -1;
+			}
 		}
+
+		/*
+		 * We'll retry the write. Most likely it will return immediately
+		 * because there's still no buffer space available, and we'll wait for
+		 * the socket to become ready again.
+		 */
 		goto retry;
 	}
 
