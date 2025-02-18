@@ -525,6 +525,26 @@ SetShellResultVariables(int wait_result)
 
 
 /*
+ * Set special pipeline variables
+ * - PIPELINE_SYNC_COUNT: The number of piped syncs
+ * - PIPELINE_COMMAND_COUNT: The number of piped commands
+ * - PIPELINE_RESULT_COUNT: The number of results available to read
+ */
+static void
+SetPipelineVariables(void)
+{
+	char		buf[32];
+
+	snprintf(buf, sizeof(buf), "%d", pset.piped_syncs);
+	SetVariable(pset.vars, "PIPELINE_SYNC_COUNT", buf);
+	snprintf(buf, sizeof(buf), "%d", pset.piped_commands);
+	SetVariable(pset.vars, "PIPELINE_COMMAND_COUNT", buf);
+	snprintf(buf, sizeof(buf), "%d", pset.available_results);
+	SetVariable(pset.vars, "PIPELINE_RESULT_COUNT", buf);
+}
+
+
+/*
  * ClearOrSaveResult
  *
  * If the result represents an error, remember it for possible display by
@@ -1655,6 +1675,8 @@ ExecQueryAndProcessResults(const char *query,
 
 		CheckConnection();
 
+		SetPipelineVariables();
+
 		return -1;
 	}
 
@@ -1663,8 +1685,10 @@ ExecQueryAndProcessResults(const char *query,
 	{
 		/*
 		 * We're in a pipeline and haven't reached the pipeline end or there
-		 * was no request to read pipeline results, exit.
+		 * was no request to read pipeline results, update psql variables and
+		 * exit.
 		 */
+		SetPipelineVariables();
 		return 1;
 	}
 
@@ -2097,6 +2121,7 @@ ExecQueryAndProcessResults(const char *query,
 		Assert(pset.available_results == 0);
 	}
 	Assert(pset.requested_results == 0);
+	SetPipelineVariables();
 
 	/* may need this to recover from conn loss during COPY */
 	if (!CheckConnection())
