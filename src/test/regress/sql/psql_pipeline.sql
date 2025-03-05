@@ -211,17 +211,129 @@ SELECT $1 \bind 3 \sendpipeline
 \endpipeline
 
 --
+-- Tests pipelining queries with ';'
+--
+
+-- Single query sent with ';'
+\startpipeline
+SELECT 1;
+\endpipeline
+
+-- Multiple queries sent with ';'
+\startpipeline
+SELECT 1;
+SELECT 2;
+SELECT 3;
+\endpipeline
+
+-- Multiple queries on the same line can be piped with ';'
+\startpipeline
+SELECT 1; SELECT 2; SELECT 3
+;
+\endpipeline
+
+-- Test \flush with queries piped with ';'
+\startpipeline
+\flush
+SELECT 1;
+\flush
+SELECT 2;
+SELECT 3;
+\endpipeline
+
+-- Send multiple syncs with queries piped with ';'
+\startpipeline
+\echo :PIPELINE_COMMAND_COUNT
+\echo :PIPELINE_SYNC_COUNT
+\echo :PIPELINE_RESULT_COUNT
+SELECT 1;
+\syncpipeline
+\syncpipeline
+SELECT 2;
+\syncpipeline
+SELECT 3;
+\echo :PIPELINE_COMMAND_COUNT
+\echo :PIPELINE_SYNC_COUNT
+\echo :PIPELINE_RESULT_COUNT
+\endpipeline
+
+-- Mix queries piped with ';' and \sendpipeline
+\startpipeline
+SELECT 1;
+SELECT $1 \bind 'val1' \sendpipeline
+SELECT $1, $2 \bind 'val2' 'val3' \sendpipeline
+SELECT 2;
+\endpipeline
+
+-- Piping a query with ';' will replace the unnamed prepared statement
+\startpipeline
+SELECT $1 \parse ''
+SELECT 1;
+\bind_named ''
+\endpipeline
+
+-- An extended query can be piped by a ';' after a newline
+\startpipeline
+SELECT $1 \bind 1
+;
+SELECT 2;
+\endpipeline
+
+-- COPY FROM STDIN, using ';'
+\startpipeline
+SELECT 'val1';
+COPY psql_pipeline FROM STDIN;
+\endpipeline
+20	test2
+\.
+
+-- COPY FROM STDIN with \flushrequest + \getresults, using ';'
+\startpipeline
+SELECT 'val1';
+COPY psql_pipeline FROM STDIN;
+\flushrequest
+\getresults
+30	test3
+\.
+\endpipeline
+
+-- COPY FROM STDIN with \syncpipeline + \getresults, using ';'
+\startpipeline
+SELECT 'val1';
+COPY psql_pipeline FROM STDIN;
+\syncpipeline
+\getresults
+40	test4
+\.
+\endpipeline
+
+-- COPY TO STDOUT, using ';'
+\startpipeline
+SELECT 'val1';
+copy psql_pipeline TO STDOUT;
+\endpipeline
+
+-- COPY TO STDOUT with \flushrequest + \getresults, using ';'
+\startpipeline
+SELECT 'val1';
+copy psql_pipeline TO STDOUT;
+\flushrequest
+\getresults
+\endpipeline
+
+-- COPY TO STDOUT with \syncpipeline + \getresults, using ';'
+\startpipeline
+SELECT 'val1';
+copy psql_pipeline TO STDOUT;
+\syncpipeline
+\getresults
+\endpipeline
+
+--
 -- Pipeline errors
 --
 
 -- \endpipeline outside of pipeline should fail
-\endpipeline
-
--- Query using simple protocol should not be sent and should leave the
--- pipeline usable.
-\startpipeline
-SELECT 1;
-SELECT $1 \bind 'val1' \sendpipeline
 \endpipeline
 
 -- After an aborted pipeline, commands after a \syncpipeline should be
@@ -239,6 +351,13 @@ SELECT \bind 'val1' \sendpipeline
 SELECT $1 \bind 'val1' \sendpipeline
 \endpipeline
 
+-- Using ';' with a parameter will trigger an incorrect parameter error and
+-- abort the pipeline
+\startpipeline
+SELECT $1;
+SELECT 1;
+\endpipeline
+
 -- An explicit transaction with an error needs to be rollbacked after
 -- the pipeline.
 \startpipeline
@@ -248,7 +367,7 @@ ROLLBACK \bind \sendpipeline
 \endpipeline
 ROLLBACK;
 
--- \watch sends a simple query, something not allowed within a pipeline.
+-- \watch is not allowed within a pipeline.
 \startpipeline
 SELECT \bind \sendpipeline
 \watch 1
@@ -372,8 +491,8 @@ select 1;
 -- Error messages accumulate and are repeated.
 \startpipeline
 SELECT 1 \bind \sendpipeline
-SELECT 1;
-SELECT 1;
+\gdesc
+\gdesc
 \endpipeline
 
 --
