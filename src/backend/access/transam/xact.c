@@ -1604,6 +1604,7 @@ AtCommit_Memory(void)
 	 * are about to delete.  If it somehow is, assertions in mcxt.c will
 	 * complain.)
 	 */
+	Assert(MemoryContextIsValid(s->priorContext));
 	MemoryContextSwitchTo(s->priorContext);
 
 	/*
@@ -1983,6 +1984,7 @@ AtCleanup_Memory(void)
 	 * are about to delete.  If it somehow is, assertions in mcxt.c will
 	 * complain.)
 	 */
+	Assert(MemoryContextIsValid(s->priorContext));
 	MemoryContextSwitchTo(s->priorContext);
 
 	/*
@@ -2030,6 +2032,7 @@ AtSubCleanup_Memory(void)
 	 * we are about to delete.  If it somehow is, assertions in mcxt.c will
 	 * complain.)
 	 */
+	Assert(MemoryContextIsValid(s->priorContext));
 	MemoryContextSwitchTo(s->priorContext);
 
 	/* Update CurTransactionContext (might not be same as priorContext) */

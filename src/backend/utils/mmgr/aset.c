@@ -654,6 +654,14 @@ AllocSetDelete(MemoryContext context)
 			Assert(freelist->num_free == 0);
 		}
 
+		/*
+		 * Set the node type to T_Invalid before putting it in the freelist.
+		 * This is used as a way to mark the context as deleted and shouldn't
+		 * be used as is. Attempting to use it will trip MemoryContextIsValid
+		 * and AllocSetIsValid checks.
+		 */
+		context->type = T_Invalid;
+
 		/* Now add the just-deleted context to the freelist. */
 		set->header.nextchild = (MemoryContext) freelist->first_free;
 		freelist->first_free = set;

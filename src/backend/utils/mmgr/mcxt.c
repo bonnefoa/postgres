@@ -1121,6 +1121,8 @@ MemoryContextCreate(MemoryContext node,
 	/* OK to link node into context tree */
 	if (parent)
 	{
+		/* Make sure the provided parent is valid */
+		Assert(MemoryContextIsValid(parent));
 		node->nextchild = parent->firstchild;
 		if (parent->firstchild != NULL)
 			parent->firstchild->prevchild = node;
