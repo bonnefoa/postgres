@@ -1975,21 +1975,43 @@ exec_replication_command(const char *cmd_string)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("cannot execute new commands while WAL sender is in stopping mode")));
 
-	/*
-	 * CREATE_REPLICATION_SLOT ... LOGICAL exports a snapshot until the next
-	 * command arrives. Clean up the old stuff if there's anything.
-	 */
-	SnapBuildClearExportedSnapshot();
+	if (SnapBuildExportInProgress())
+	{
+		Assert(IsTransactionState());
+		Assert(MemoryContextIsValid(CurTransactionContext));
+
+		/*
+		 * CREATE_REPLICATION_SLOT ... LOGICAL exports a snapshot until the
+		 * next command arrives. It started a transaction that will be aborted
+		 * and will restore the MemoryContext used at the time of the
+		 * transaction start. We need to save the CurrentMemoryContext before
+		 * this.
+		 */
+		old_context = CurrentMemoryContext;
+		SnapBuildClearExportedSnapshot();
+
+		/*
+		 * Set the restored MemoryContext as our cmd_context
+		 */
+		cmd_context = CurrentMemoryContext;
+	}
+	else
+	{
+		/*
+		 * Prepare to parse and execute the command. Since a transaction could
+		 * be started, this context may be stored in
+		 * transactionState->priorContext and live longer than the
+		 * CurrentMemoryContext. Thus, we need to create the replication
+		 * command context under the TopMemoryContext to avoid being deleted
+		 * by the parent while still referenced.
+		 */
+		cmd_context = AllocSetContextCreate(TopMemoryContext,
+											"Replication command context",
+											ALLOCSET_DEFAULT_SIZES);
+		old_context = MemoryContextSwitchTo(cmd_context);
+	}
 
 	CHECK_FOR_INTERRUPTS();
-
-	/*
-	 * Prepare to parse and execute the command.
-	 */
-	cmd_context = AllocSetContextCreate(CurrentMemoryContext,
-										"Replication command context",
-										ALLOCSET_DEFAULT_SIZES);
-	old_context = MemoryContextSwitchTo(cmd_context);
 
 	replication_scanner_init(cmd_string, &scanner);
 
@@ -2164,7 +2186,17 @@ exec_replication_command(const char *cmd_string)
 
 	/* done */
 	MemoryContextSwitchTo(old_context);
-	MemoryContextDelete(cmd_context);
+
+	if (SnapBuildExportInProgress())
+
+		/*
+		 * A snapshot export started a transaction that needs to live until
+		 * the next command. We need to keep the cmd_context alive as it will
+		 * be restored when the transaction abort.
+		 */
+		Assert(IsTransactionState());
+	else
+		MemoryContextDelete(cmd_context);
 
 	/*
 	 * We need not update ps display or pg_stat_activity, because PostgresMain

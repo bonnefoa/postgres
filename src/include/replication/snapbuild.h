@@ -76,6 +76,7 @@ extern Snapshot SnapBuildInitialSnapshot(SnapBuild *builder);
 extern const char *SnapBuildExportSnapshot(SnapBuild *builder);
 extern void SnapBuildClearExportedSnapshot(void);
 extern void SnapBuildResetExportedSnapshotState(void);
+extern bool SnapBuildExportInProgress(void);
 
 extern SnapBuildState SnapBuildCurrentState(SnapBuild *builder);
 extern Snapshot SnapBuildGetOrBuildSnapshot(SnapBuild *builder);

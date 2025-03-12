@@ -631,6 +631,15 @@ SnapBuildResetExportedSnapshotState(void)
 }
 
 /*
+ * Return true if there's an ongoing export
+ */
+bool
+SnapBuildExportInProgress(void)
+{
+	return ExportInProgress;
+}
+
+/*
  * Handle the effects of a single heap change, appropriate to the current state
  * of the snapshot builder and returns whether changes made at (xid, lsn) can
  * be decoded.
