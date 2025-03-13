@@ -112,6 +112,32 @@ typedef struct XLogDumpStats
 	relStats_hash *rel_stats[RM_NEXT_ID][MAX_XLINFO_TYPES];
 } XLogDumpStats;
 
+typedef struct _relMappingEntry
+{
+	Oid relfilenode;
+	Oid oid;
+	char *relname;
+	char *parent_relname;
+	uint32		status;			/* hash status */
+}			RelMappingEntry;
+
+#define SH_PREFIX		relMapping
+#define SH_ELEMENT_TYPE	RelMappingEntry
+#define SH_KEY_TYPE		Oid
+#define	SH_KEY			relfilenode
+#define SH_HASH_KEY(tb, key)	hash_bytes((const unsigned char *) &(key), sizeof(Oid))
+#define SH_EQUAL(tb, a, b)		(a == b)
+#define	SH_SCOPE		static inline
+#define SH_RAW_ALLOCATOR		pg_malloc0
+#define SH_DEFINE
+#define SH_DECLARE
+#include "lib/simplehash.h"
+
+#define RELMAPPINGHASH_INITIAL_SIZE	20
+
+static relMapping_hash *relmapping_hash = NULL;
+
+
 #define fatal_error(...) do { pg_log_fatal(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
 
 static void
@@ -654,7 +680,7 @@ XLogDumpStatsRow(const char *name,
 	if (total_len != 0)
 		tot_len_pct = 100 * (double) tot_len / total_len;
 
-	printf("%-27s "
+	printf("%-75s "
 		   "%20" INT64_MODIFIER "u (%6.02f) "
 		   "%20" INT64_MODIFIER "u (%6.02f) "
 		   "%20" INT64_MODIFIER "u (%6.02f) "
@@ -697,8 +723,8 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 	 * strlen("(100.00%)")
 	 */
 
-	printf("%-27s %20s %8s %20s %8s %20s %8s %20s %8s\n"
-		   "%-27s %20s %8s %20s %8s %20s %8s %20s %8s\n",
+	printf("%-75s %20s %8s %20s %8s %20s %8s %20s %8s\n"
+		   "%-75s %20s %8s %20s %8s %20s %8s %20s %8s\n",
 		   "Type", "N", "(%)", "Record size", "(%)", "FPI size", "(%)", "Combined size", "(%)",
 		   "----", "-", "---", "-----------", "---", "--------", "---", "-------------", "---");
 
@@ -737,18 +763,30 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 
 				hash = stats->rel_stats[ri][rj];
 				if (hash != NULL) {
-					RelStatsEntry *entry;
+					RelStatsEntry *relstats_entry;
 					relStats_iterator i;
 					relStats_start_iterate(hash, &i);
 
-					while ((entry = relStats_iterate(hash, &i)) != NULL)
+					while ((relstats_entry = relStats_iterate(hash, &i)) != NULL)
 					{
-						Stats *relStats = &entry->stats;
+						Stats *relStats = &relstats_entry->stats;
+						char *relname;
+						RelMappingEntry *relmapping_entry;
 						count = relStats->count;
 						rec_len = relStats->rec_len;
 						fpi_len = relStats->fpi_len;
 
-						XLogDumpStatsRow(psprintf(" %u", entry->relFileNode.relNode),
+						relmapping_entry = relMapping_lookup(relmapping_hash, relstats_entry->relFileNode.relNode);
+						if (relmapping_entry == NULL) {
+							relname = psprintf(" %u", relstats_entry->relFileNode.relNode);
+						} else {
+							if (relmapping_entry->parent_relname != NULL)
+								relname = psprintf(" %s (toast)", relmapping_entry->parent_relname);
+							else
+								relname = psprintf(" %s", relmapping_entry->relname);
+						}
+
+						XLogDumpStatsRow(relname,
 										 count, total_count, rec_len, total_rec_len,
 										 fpi_len, total_fpi_len, tot_len, total_len);
 					}
@@ -768,7 +806,7 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 		}
 	}
 
-	printf("%-27s %20s %8s %20s %8s %20s %8s %20s\n",
+	printf("%-75s %20s %8s %20s %8s %20s %8s %20s\n",
 		   "", "--------", "", "--------", "", "--------", "", "--------");
 
 	/*
@@ -786,7 +824,7 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 	if (total_len != 0)
 		fpi_len_pct = 100 * (double) total_fpi_len / total_len;
 
-	printf("%-27s "
+	printf("%-75s "
 		   "%20" INT64_MODIFIER "u %-9s"
 		   "%20" INT64_MODIFIER "u %-9s"
 		   "%20" INT64_MODIFIER "u %-9s"
@@ -813,6 +851,69 @@ isXactAborted(TransactionId xid)
 		return xact_state->aborted;
 	}
 	return false;
+}
+
+static void
+readRelMappingFile(char *relmapping_file)
+{
+	int			linenr = 0;
+	char	   *line;
+	char		buf[1024];
+
+	FILE *f = fopen(relmapping_file, "r");
+	if (f == NULL) {
+		fatal_error("could not relmapping file \"%s\": %m", relmapping_file);
+		return;
+	}
+
+	while ((line = fgets(buf, sizeof(buf), f)) != NULL)
+	{
+		RelMappingEntry *entry;
+		Oid 	relfilenode;
+		Oid 	oid;
+		char 	*relname;
+		char 	*parent_relname;
+		int		len;
+		bool found;
+
+		linenr++;
+
+		/* skip header */
+		if (linenr == 0)
+			continue;
+
+		if (strlen(line) >= sizeof(buf) - 1)
+		{
+			fatal_error("line %d too long in file \"%s\"", linenr, relmapping_file);
+			goto exit;
+		}
+
+		/* ignore whitespace at end of line, especially the newline */
+		len = strlen(line);
+		while (len > 0 && isspace((unsigned char) line[len - 1]))
+			line[--len] = '\0';
+
+		/* ignore leading whitespace too */
+		while (*line && isspace((unsigned char) line[0]))
+			line++;
+
+		// relfilenode,relname,oid,parent relname
+		relfilenode = atoi(strtok(line, ","));
+		relname = strtok(NULL, ",");
+		oid = atoi(strtok(NULL, ","));
+		parent_relname = strtok(NULL, ",");
+
+		entry = relMapping_insert(relmapping_hash, relfilenode, &found);
+		Assert(found == false);
+		entry->relfilenode = relfilenode;
+		entry->oid = oid;
+		entry->relname = strdup(relname);
+		if (parent_relname != NULL)
+			entry->parent_relname = strdup(parent_relname);
+	}
+
+exit:
+	fclose(f);
 }
 
 static void
@@ -895,6 +996,7 @@ main(int argc, char **argv)
 	XLogRecord *record;
 	XLogRecPtr	first_record;
 	char	   *waldir = NULL;
+	char	   *relmapping_file = NULL;
 	char	   *errormsg;
 
 	static struct option long_options[] = {
@@ -903,6 +1005,7 @@ main(int argc, char **argv)
 		{"end", required_argument, NULL, 'e'},
 		{"follow", no_argument, NULL, 'f'},
 		{"help", no_argument, NULL, '?'},
+		{"relmapping", optional_argument, NULL, 'm'},
 		{"limit", required_argument, NULL, 'n'},
 		{"path", required_argument, NULL, 'p'},
 		{"quiet", no_argument, NULL, 'q'},
@@ -964,7 +1067,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "abe:fn:p:qr:s:t:x:z",
+	while ((option = getopt_long(argc, argv, "abe:fm:n:p:qr:s:t:x:z",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -986,6 +1089,9 @@ main(int argc, char **argv)
 				break;
 			case 'f':
 				config.follow = true;
+				break;
+			case 'm':
+				relmapping_file = pg_strdup(optarg);
 				break;
 			case 'n':
 				if (sscanf(optarg, "%d", &config.stop_after_records) != 1)
@@ -1093,6 +1199,12 @@ main(int argc, char **argv)
 			pg_log_error("could not open directory \"%s\": %m", waldir);
 			goto bad_argument;
 		}
+	}
+
+	if (relmapping_file != NULL)
+	{
+		relmapping_hash = relMapping_create(RELMAPPINGHASH_INITIAL_SIZE, NULL);
+		readRelMappingFile(relmapping_file);
 	}
 
 	/* parse files as start/end boundaries, extract path if not specified */
