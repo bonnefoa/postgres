@@ -24,7 +24,6 @@
 #include "common/fe_memutils.h"
 #include "common/hashfn.h"
 #include "common/logging.h"
-#include "lib/ilist.h"
 #include "getopt_long.h"
 #include "rmgrdesc.h"
 
@@ -39,15 +38,6 @@ typedef struct XLogDumpPrivate
 	XLogRecPtr	endptr;
 	bool		endptr_reached;
 } XLogDumpPrivate;
-
-typedef struct XactState
-{
-	TransactionId xid;
-	bool		aborted;
-	slist_node	xact_link;
-}			XactState;
-
-static slist_head xact_states;
 
 typedef struct XLogDumpConfig
 {
@@ -67,12 +57,6 @@ typedef struct XLogDumpConfig
 	bool		filter_by_xid_enabled;
 	bool		filter_only_aborted_xact;
 } XLogDumpConfig;
-
-typedef struct aborted_xact
-{
-	int			xid;
-	slist_head	xacts;
-}			aborted_xact;
 
 typedef struct Stats
 {
@@ -133,9 +117,31 @@ typedef struct _relMappingEntry
 #define SH_DECLARE
 #include "lib/simplehash.h"
 
-#define RELMAPPINGHASH_INITIAL_SIZE	20
 
+typedef struct _xactState
+{
+	TransactionId xid;
+	bool		aborted;
+	uint32		status;			/* hash status */
+}			XactState;
+
+#define SH_PREFIX		xactState
+#define SH_ELEMENT_TYPE	XactState
+#define SH_KEY_TYPE		TransactionId
+#define	SH_KEY			xid
+#define SH_HASH_KEY(tb, key)	hash_bytes((const unsigned char *) &(key), sizeof(TransactionId))
+#define SH_EQUAL(tb, a, b)		(a == b)
+#define	SH_SCOPE		static inline
+#define SH_RAW_ALLOCATOR		pg_malloc0
+#define SH_DEFINE
+#define SH_DECLARE
+#include "lib/simplehash.h"
+
+#define RELMAPPINGHASH_INITIAL_SIZE	20
 static relMapping_hash * relmapping_hash = NULL;
+
+#define XACTSTATE_INITIAL_SIZE	10000
+static xactState_hash * xactstate_hash = NULL;
 
 
 #define fatal_error(...) do { pg_log_fatal(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
@@ -736,6 +742,7 @@ XLogDumpDisplayPerRelStats(relStats_hash * relStatsHash, uint64 total_count, uin
 	RelStatsEntry *relstats_entry;
 	relStats_iterator iter;
 	int			j = 0;
+	int			n = 0;
 
 	RelStatsEntry **relstatsArray = (RelStatsEntry * *) calloc(relStatsHash->members, sizeof(RelStatsEntry *));
 
@@ -753,12 +760,16 @@ XLogDumpDisplayPerRelStats(relStats_hash * relStatsHash, uint64 total_count, uin
 		RelStatsEntry *relstatsEntry = relstatsArray[i];
 		Stats	   *relStats = &relstatsEntry->stats;
 
+		/* TODO: Make this configurable */
+		if (n > 10)
+			break;
 		relname = relnodeToRelname(relstatsEntry->relFileNode.relNode);
 
 		XLogDumpStatsRow(relname,
 						 relStats->count, total_count, relStats->rec_len, total_rec_len,
 						 relStats->fpi_len, total_fpi_len,
 						 relStats->rec_len + relStats->fpi_len, total_len);
+		n++;
 	}
 	free((void *) relstatsArray);
 }
@@ -837,6 +848,8 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 				relStatsHash = stats->rel_stats[ri][rj];
 				if (relStatsHash != NULL)
 					XLogDumpDisplayPerRelStats(relStatsHash, total_count, total_rec_len, total_fpi_len, total_len);
+
+				printf("\n");
 			}
 		}
 		else
@@ -887,19 +900,10 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 static bool
 isXactAborted(TransactionId xid)
 {
-	slist_iter	iter;
-
-	slist_foreach(iter, &xact_states)
-	{
-		XactState  *xact_state = slist_container(XactState, xact_link, iter.cur);
-
-		if (xact_state->xid != xid)
-		{
-			continue;
-		}
-		return xact_state->aborted;
-	}
-	return false;
+	XactState *xact_state = xactState_lookup(xactstate_hash, xid);
+	if (xact_state == NULL)
+		return false;
+	return xact_state->aborted;
 }
 
 static void
@@ -976,6 +980,8 @@ XLogBuildAbortedXactList(XLogReaderState *xlogreader_state)
 	for (;;)
 	{
 		uint8		info;
+		bool found;
+		XactState *xact_state;
 
 		record = XLogReadRecord(xlogreader_state, &errormsg);
 		if (!record)
@@ -986,22 +992,12 @@ XLogBuildAbortedXactList(XLogReaderState *xlogreader_state)
 
 		info = XLogRecGetInfo(xlogreader_state) & XLOG_XACT_OPMASK;
 
+		xact_state = xactState_insert(xactstate_hash, XLogRecGetXid(xlogreader_state), &found);
+		xact_state->xid = XLogRecGetXid(xlogreader_state);
 		if (info == XLOG_XACT_ABORT || info == XLOG_XACT_ABORT_PREPARED)
-		{
-			XactState  *a = palloc(sizeof(XactState));
-
-			a->xid = XLogRecGetXid(xlogreader_state);
-			a->aborted = true;
-			slist_push_head(&xact_states, &a->xact_link);
-		}
-		else if (info == XLOG_XACT_COMMIT)
-		{
-			XactState  *a = palloc(sizeof(XactState));
-
-			a->xid = XLogRecGetXid(xlogreader_state);
-			a->aborted = false;
-			slist_push_head(&xact_states, &a->xact_link);
-		}
+			xact_state->aborted = true;
+		else if (info == XLOG_XACT_COMMIT || info == XLOG_XACT_COMMIT_PREPARED)
+			xact_state->aborted = true;
 	}
 }
 
@@ -1252,6 +1248,8 @@ main(int argc, char **argv)
 			goto bad_argument;
 		}
 	}
+
+	xactstate_hash = xactState_create(XACTSTATE_INITIAL_SIZE, NULL);
 
 	if (relmapping_file != NULL)
 	{
