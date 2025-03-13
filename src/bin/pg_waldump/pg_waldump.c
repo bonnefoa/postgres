@@ -114,10 +114,10 @@ typedef struct XLogDumpStats
 
 typedef struct _relMappingEntry
 {
-	Oid relfilenode;
-	Oid oid;
-	char *relname;
-	char *parent_relname;
+	Oid			relfilenode;
+	Oid			oid;
+	char	   *relname;
+	char	   *parent_relname;
 	uint32		status;			/* hash status */
 }			RelMappingEntry;
 
@@ -135,7 +135,7 @@ typedef struct _relMappingEntry
 
 #define RELMAPPINGHASH_INITIAL_SIZE	20
 
-static relMapping_hash *relmapping_hash = NULL;
+static relMapping_hash * relmapping_hash = NULL;
 
 
 #define fatal_error(...) do { pg_log_fatal(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
@@ -520,17 +520,24 @@ XLogDumpCountRecord(XLogDumpConfig *config, XLogDumpStats *stats,
 	stats->record_stats[rmid][recid].fpi_len += fpi_len;
 
 	hash = stats->rel_stats[rmid][recid];
-	if (hash == NULL) {
+	if (hash == NULL)
+	{
 		hash = relStats_create(RELSTATSHASH_INITIAL_SIZE, NULL);
 		stats->rel_stats[rmid][recid] = hash;
 	}
 	for (block_id = 0; block_id <= record->max_block_id; block_id++)
 	{
 		RelStatsEntry *relStats_entry;
-		bool found;
+		bool		found;
 
 		XLogRecGetBlockTag(record, block_id, &rnode, NULL, NULL);
 		relStats_entry = relStats_insert(hash, rnode, &found);
+		if (!found)
+		{
+			relStats_entry->stats.count = 0;
+			relStats_entry->stats.rec_len = 0;
+			relStats_entry->stats.fpi_len = 0;
+		}
 		relStats_entry->stats.count++;
 		relStats_entry->stats.rec_len += rec_len;
 		relStats_entry->stats.fpi_len += fpi_len;
@@ -689,6 +696,72 @@ XLogDumpStatsRow(const char *name,
 		   tot_len, tot_len_pct);
 }
 
+static char *
+relnodeToRelname(Oid relnode)
+{
+	RelMappingEntry *relmapping_entry;
+
+	if (relmapping_hash == NULL)
+		return psprintf(" %u", relnode);
+
+	relmapping_entry = relMapping_lookup(relmapping_hash, relnode);
+	if (relmapping_entry == NULL)
+		return psprintf(" %u", relnode);
+
+	if (relmapping_entry->parent_relname != NULL)
+		return psprintf(" %s (toast)", relmapping_entry->parent_relname);
+	else
+		return psprintf(" %s", relmapping_entry->relname);
+}
+
+/*
+ * qsort comparator for ExtensionMemberIds
+ */
+static int
+RelStatsEntryCompare(const void *p1, const void *p2)
+{
+	const		RelStatsEntry *obj1 = *(const RelStatsEntry * *) p1;
+	const		RelStatsEntry *obj2 = *(const RelStatsEntry * *) p2;
+
+	if (obj1->stats.rec_len > obj2->stats.rec_len)
+		return -1;
+	if (obj1->stats.rec_len < obj2->stats.rec_len)
+		return 1;
+	return 0;
+}
+
+static void
+XLogDumpDisplayPerRelStats(relStats_hash * relStatsHash, uint64 total_count, uint64 total_rec_len, uint64 total_fpi_len, uint64 total_len)
+{
+	RelStatsEntry *relstats_entry;
+	relStats_iterator iter;
+	int			j = 0;
+
+	RelStatsEntry **relstatsArray = (RelStatsEntry * *) calloc(relStatsHash->members, sizeof(RelStatsEntry *));
+
+	relStats_start_iterate(relStatsHash, &iter);
+	while ((relstats_entry = relStats_iterate(relStatsHash, &iter)) != NULL)
+	{
+		relstatsArray[j++] = relstats_entry;
+	}
+	qsort((void *) relstatsArray, relStatsHash->members, sizeof(RelStatsEntry *),
+		  RelStatsEntryCompare);
+
+	for (int i = 0; i < relStatsHash->members; i++)
+	{
+		char	   *relname;
+		RelStatsEntry *relstatsEntry = relstatsArray[i];
+		Stats	   *relStats = &relstatsEntry->stats;
+
+		relname = relnodeToRelname(relstatsEntry->relFileNode.relNode);
+
+		XLogDumpStatsRow(relname,
+						 relStats->count, total_count, relStats->rec_len, total_rec_len,
+						 relStats->fpi_len, total_fpi_len,
+						 relStats->rec_len + relStats->fpi_len, total_len);
+	}
+	free((void *) relstatsArray);
+}
 
 /*
  * Display summary statistics about the records seen so far.
@@ -741,7 +814,7 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 			for (rj = 0; rj < MAX_XLINFO_TYPES; rj++)
 			{
 				const char *id;
-				relStats_hash *hash;
+				relStats_hash *relStatsHash;
 
 				count = stats->record_stats[ri][rj].count;
 				rec_len = stats->record_stats[ri][rj].rec_len;
@@ -761,36 +834,9 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 								 count, total_count, rec_len, total_rec_len,
 								 fpi_len, total_fpi_len, tot_len, total_len);
 
-				hash = stats->rel_stats[ri][rj];
-				if (hash != NULL) {
-					RelStatsEntry *relstats_entry;
-					relStats_iterator i;
-					relStats_start_iterate(hash, &i);
-
-					while ((relstats_entry = relStats_iterate(hash, &i)) != NULL)
-					{
-						Stats *relStats = &relstats_entry->stats;
-						char *relname;
-						RelMappingEntry *relmapping_entry;
-						count = relStats->count;
-						rec_len = relStats->rec_len;
-						fpi_len = relStats->fpi_len;
-
-						relmapping_entry = relMapping_lookup(relmapping_hash, relstats_entry->relFileNode.relNode);
-						if (relmapping_entry == NULL) {
-							relname = psprintf(" %u", relstats_entry->relFileNode.relNode);
-						} else {
-							if (relmapping_entry->parent_relname != NULL)
-								relname = psprintf(" %s (toast)", relmapping_entry->parent_relname);
-							else
-								relname = psprintf(" %s", relmapping_entry->relname);
-						}
-
-						XLogDumpStatsRow(relname,
-										 count, total_count, rec_len, total_rec_len,
-										 fpi_len, total_fpi_len, tot_len, total_len);
-					}
-				}
+				relStatsHash = stats->rel_stats[ri][rj];
+				if (relStatsHash != NULL)
+					XLogDumpDisplayPerRelStats(relStatsHash, total_count, total_rec_len, total_fpi_len, total_len);
 			}
 		}
 		else
@@ -799,6 +845,9 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 			rec_len = stats->rmgr_stats[ri].rec_len;
 			fpi_len = stats->rmgr_stats[ri].fpi_len;
 			tot_len = rec_len + fpi_len;
+
+			if (count == 0)
+				continue;
 
 			XLogDumpStatsRow(desc->rm_name,
 							 count, total_count, rec_len, total_rec_len,
@@ -860,8 +909,10 @@ readRelMappingFile(char *relmapping_file)
 	char	   *line;
 	char		buf[1024];
 
-	FILE *f = fopen(relmapping_file, "r");
-	if (f == NULL) {
+	FILE	   *f = fopen(relmapping_file, "r");
+
+	if (f == NULL)
+	{
 		fatal_error("could not relmapping file \"%s\": %m", relmapping_file);
 		return;
 	}
@@ -869,12 +920,12 @@ readRelMappingFile(char *relmapping_file)
 	while ((line = fgets(buf, sizeof(buf), f)) != NULL)
 	{
 		RelMappingEntry *entry;
-		Oid 	relfilenode;
-		Oid 	oid;
-		char 	*relname;
-		char 	*parent_relname;
-		int		len;
-		bool found;
+		Oid			relfilenode;
+		Oid			oid;
+		char	   *relname;
+		char	   *parent_relname;
+		int			len;
+		bool		found;
 
 		linenr++;
 
@@ -897,7 +948,7 @@ readRelMappingFile(char *relmapping_file)
 		while (*line && isspace((unsigned char) line[0]))
 			line++;
 
-		// relfilenode,relname,oid,parent relname
+		/* relfilenode,relname,oid,parent relname */
 		relfilenode = atoi(strtok(line, ","));
 		relname = strtok(NULL, ",");
 		oid = atoi(strtok(NULL, ","));
@@ -1167,7 +1218,8 @@ main(int argc, char **argv)
 				{
 					if (strcmp(optarg, "record") == 0)
 						config.stats_per_record = true;
-					else if (strcmp(optarg, "rel") == 0) {
+					else if (strcmp(optarg, "rel") == 0)
+					{
 						config.stats_per_record = true;
 						config.stats_per_rel = true;
 					}
