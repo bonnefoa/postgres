@@ -96,6 +96,13 @@ typedef struct XLogDumpStats
 	relStats_hash *rel_stats[RM_NEXT_ID][MAX_XLINFO_TYPES];
 } XLogDumpStats;
 
+typedef struct ResourceStats
+{
+	int			rmgr_id;
+	int			rmgr_op;
+	Stats		stats;
+}			ResourceStats;
+
 typedef struct _relMappingEntry
 {
 	Oid			relfilenode;
@@ -142,7 +149,6 @@ static relMapping_hash * relmapping_hash = NULL;
 
 #define XACTSTATE_INITIAL_SIZE	10000
 static xactState_hash * xactstate_hash = NULL;
-
 
 #define fatal_error(...) do { pg_log_fatal(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
 
@@ -736,6 +742,22 @@ RelStatsEntryCompare(const void *p1, const void *p2)
 	return 0;
 }
 
+/*
+ * qsort comparator for ResourceStats
+ */
+static int
+ResourceStatsCompare(const void *p1, const void *p2)
+{
+	const		ResourceStats *obj1 = (const ResourceStats *) p1;
+	const		ResourceStats *obj2 = (const ResourceStats *) p2;
+
+	if (obj1->stats.rec_len > obj2->stats.rec_len)
+		return -1;
+	if (obj1->stats.rec_len < obj2->stats.rec_len)
+		return 1;
+	return 0;
+}
+
 static void
 XLogDumpDisplayPerRelStats(relStats_hash * relStatsHash, uint64 total_count, uint64 total_rec_len, uint64 total_fpi_len, uint64 total_len)
 {
@@ -781,13 +803,20 @@ static void
 XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 {
 	int			ri,
-				rj;
+				rj,
+				n = 0;
 	uint64		total_count = 0;
 	uint64		total_rec_len = 0;
 	uint64		total_fpi_len = 0;
 	uint64		total_len = 0;
 	double		rec_len_pct,
 				fpi_len_pct;
+	ResourceStats *resourceStats;
+	uint64		count,
+				rec_len,
+				fpi_len,
+				tot_len;
+
 
 	/*
 	 * Each row shows its percentages of the total, so make a first pass to
@@ -812,61 +841,91 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 		   "Type", "N", "(%)", "Record size", "(%)", "FPI size", "(%)", "Combined size", "(%)",
 		   "----", "-", "---", "-----------", "---", "--------", "---", "-------------", "---");
 
-	for (ri = 0; ri < RM_NEXT_ID; ri++)
+	if (config->stats_per_record)
 	{
-		uint64		count,
-					rec_len,
-					fpi_len,
-					tot_len;
-		const RmgrDescData *desc = &RmgrDescTable[ri];
-
-		if (config->stats_per_record)
+		resourceStats = calloc(MAX_XLINFO_TYPES * RM_NEXT_ID, sizeof(ResourceStats));
+		for (ri = 0; ri < RM_NEXT_ID; ri++)
 		{
 			for (rj = 0; rj < MAX_XLINFO_TYPES; rj++)
 			{
-				const char *id;
-				relStats_hash *relStatsHash;
+				ResourceStats *rstat = &resourceStats[n++];
 
-				count = stats->record_stats[ri][rj].count;
-				rec_len = stats->record_stats[ri][rj].rec_len;
-				fpi_len = stats->record_stats[ri][rj].fpi_len;
-				tot_len = rec_len + fpi_len;
-
-				/* Skip undefined combinations and ones that didn't occur */
-				if (count == 0)
-					continue;
-
-				/* the upper four bits in xl_info are the rmgr's */
-				id = desc->rm_identify(rj << 4);
-				if (id == NULL)
-					id = psprintf("UNKNOWN (%x)", rj << 4);
-
-				XLogDumpStatsRow(psprintf("%s/%s", desc->rm_name, id),
-								 count, total_count, rec_len, total_rec_len,
-								 fpi_len, total_fpi_len, tot_len, total_len);
-
-				relStatsHash = stats->rel_stats[ri][rj];
-				if (relStatsHash != NULL)
-					XLogDumpDisplayPerRelStats(relStatsHash, total_count, total_rec_len, total_fpi_len, total_len);
-
-				printf("\n");
+				rstat->rmgr_id = ri;
+				rstat->rmgr_op = rj;
+				rstat->stats = stats->record_stats[ri][rj];
 			}
 		}
-		else
+		qsort((void *) resourceStats, MAX_XLINFO_TYPES * RM_NEXT_ID, sizeof(ResourceStats),
+			  ResourceStatsCompare);
+
+		for (int i = 0; i < MAX_XLINFO_TYPES * RM_NEXT_ID; i++)
 		{
-			count = stats->rmgr_stats[ri].count;
-			rec_len = stats->rmgr_stats[ri].rec_len;
-			fpi_len = stats->rmgr_stats[ri].fpi_len;
+			ResourceStats *rstats = &resourceStats[i];
+			const RmgrDescData *desc = &RmgrDescTable[rstats->rmgr_id];
+			const char *id;
+			relStats_hash *relStatsHash;
+
+			ri = rstats->rmgr_id;
+			rj = rstats->rmgr_op;
+
+			count = stats->record_stats[ri][rj].count;
+			rec_len = stats->record_stats[ri][rj].rec_len;
+			fpi_len = stats->record_stats[ri][rj].fpi_len;
+			tot_len = rec_len + fpi_len;
+
+			/* Skip undefined combinations and ones that didn't occur */
+			if (count == 0)
+				continue;
+
+			/* the upper four bits in xl_info are the rmgr's */
+			id = desc->rm_identify(rj << 4);
+			if (id == NULL)
+				id = psprintf("UNKNOWN (%x)", rj << 4);
+
+			XLogDumpStatsRow(psprintf("%s/%s", desc->rm_name, id),
+							 count, total_count, rec_len, total_rec_len,
+							 fpi_len, total_fpi_len, tot_len, total_len);
+
+			relStatsHash = stats->rel_stats[ri][rj];
+			if (relStatsHash != NULL)
+				XLogDumpDisplayPerRelStats(relStatsHash, total_count, total_rec_len, total_fpi_len, total_len);
+
+			printf("\n");
+		}
+	}
+	else
+	{
+		resourceStats = calloc(RM_NEXT_ID, sizeof(ResourceStats));
+		for (ri = 0; ri < RM_NEXT_ID; ri++)
+		{
+			ResourceStats *rstat = &resourceStats[n++];
+
+			rstat->rmgr_id = ri;
+			rstat->stats = stats->rmgr_stats[ri];
+		}
+		qsort((void *) resourceStats, RM_NEXT_ID, sizeof(ResourceStats),
+			  ResourceStatsCompare);
+
+		for (int i = 0; i < RM_NEXT_ID; i++)
+		{
+			ResourceStats *rstats = &resourceStats[i];
+			const RmgrDescData *desc = &RmgrDescTable[rstats->rmgr_id];
+
+			count = stats->rmgr_stats[rstats->rmgr_id].count;
+			rec_len = stats->rmgr_stats[rstats->rmgr_id].rec_len;
+			fpi_len = stats->rmgr_stats[rstats->rmgr_id].fpi_len;
 			tot_len = rec_len + fpi_len;
 
 			if (count == 0)
 				continue;
 
 			XLogDumpStatsRow(desc->rm_name,
-							 count, total_count, rec_len, total_rec_len,
-							 fpi_len, total_fpi_len, tot_len, total_len);
+					count, total_count, rec_len, total_rec_len,
+					fpi_len, total_fpi_len, tot_len, total_len);
 		}
 	}
+
+	free(resourceStats);
 
 	printf("%-75s %20s %8s %20s %8s %20s %8s %20s\n",
 		   "", "--------", "", "--------", "", "--------", "", "--------");
@@ -900,7 +959,8 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 static bool
 isXactAborted(TransactionId xid)
 {
-	XactState *xact_state = xactState_lookup(xactstate_hash, xid);
+	XactState  *xact_state = xactState_lookup(xactstate_hash, xid);
+
 	if (xact_state == NULL)
 		return false;
 	return xact_state->aborted;
@@ -980,8 +1040,8 @@ XLogBuildAbortedXactList(XLogReaderState *xlogreader_state)
 	for (;;)
 	{
 		uint8		info;
-		bool found;
-		XactState *xact_state;
+		bool		found;
+		XactState  *xact_state;
 
 		record = XLogReadRecord(xlogreader_state, &errormsg);
 		if (!record)
