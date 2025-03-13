@@ -17,11 +17,14 @@
 #include <unistd.h>
 
 #include "access/transam.h"
+#include "access/xact.h"
 #include "access/xlog_internal.h"
 #include "access/xlogreader.h"
 #include "access/xlogrecord.h"
 #include "common/fe_memutils.h"
+#include "common/hashfn.h"
 #include "common/logging.h"
+#include "lib/ilist.h"
 #include "getopt_long.h"
 #include "rmgrdesc.h"
 
@@ -37,6 +40,15 @@ typedef struct XLogDumpPrivate
 	bool		endptr_reached;
 } XLogDumpPrivate;
 
+typedef struct XactState
+{
+	TransactionId xid;
+	bool		aborted;
+	slist_node	xact_link;
+}			XactState;
+
+static slist_head xact_states;
+
 typedef struct XLogDumpConfig
 {
 	/* display options */
@@ -47,12 +59,20 @@ typedef struct XLogDumpConfig
 	bool		follow;
 	bool		stats;
 	bool		stats_per_record;
+	bool		stats_per_rel;
 
 	/* filter options */
 	int			filter_by_rmgr;
 	TransactionId filter_by_xid;
 	bool		filter_by_xid_enabled;
+	bool		filter_only_aborted_xact;
 } XLogDumpConfig;
+
+typedef struct aborted_xact
+{
+	int			xid;
+	slist_head	xacts;
+}			aborted_xact;
 
 typedef struct Stats
 {
@@ -63,11 +83,33 @@ typedef struct Stats
 
 #define MAX_XLINFO_TYPES 16
 
+typedef struct _relStatsEntry
+{
+	RelFileNode relFileNode;
+	uint32		status;			/* hash status */
+	Stats		stats;
+}			RelStatsEntry;
+
+#define SH_PREFIX		relStats
+#define SH_ELEMENT_TYPE	RelStatsEntry
+#define SH_KEY_TYPE		RelFileNode
+#define	SH_KEY			relFileNode
+#define SH_HASH_KEY(tb, key)	hash_bytes((const unsigned char *) &(key), sizeof(RelFileNode))
+#define SH_EQUAL(tb, a, b)		RelFileNodeEquals(a, b)
+#define	SH_SCOPE		static inline
+#define SH_RAW_ALLOCATOR		pg_malloc0
+#define SH_DEFINE
+#define SH_DECLARE
+#include "lib/simplehash.h"
+
+#define RELSTATSHASH_INITIAL_SIZE	20
+
 typedef struct XLogDumpStats
 {
 	uint64		count;
 	Stats		rmgr_stats[RM_NEXT_ID];
 	Stats		record_stats[RM_NEXT_ID][MAX_XLINFO_TYPES];
+	relStats_hash *rel_stats[RM_NEXT_ID][MAX_XLINFO_TYPES];
 } XLogDumpStats;
 
 #define fatal_error(...) do { pg_log_fatal(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
@@ -413,6 +455,9 @@ XLogDumpCountRecord(XLogDumpConfig *config, XLogDumpStats *stats,
 	uint8		recid;
 	uint32		rec_len;
 	uint32		fpi_len;
+	int			block_id;
+	RelFileNode rnode;
+	relStats_hash *hash;
 
 	stats->count++;
 
@@ -447,6 +492,23 @@ XLogDumpCountRecord(XLogDumpConfig *config, XLogDumpStats *stats,
 	stats->record_stats[rmid][recid].count++;
 	stats->record_stats[rmid][recid].rec_len += rec_len;
 	stats->record_stats[rmid][recid].fpi_len += fpi_len;
+
+	hash = stats->rel_stats[rmid][recid];
+	if (hash == NULL) {
+		hash = relStats_create(RELSTATSHASH_INITIAL_SIZE, NULL);
+		stats->rel_stats[rmid][recid] = hash;
+	}
+	for (block_id = 0; block_id <= record->max_block_id; block_id++)
+	{
+		RelStatsEntry *relStats_entry;
+		bool found;
+
+		XLogRecGetBlockTag(record, block_id, &rnode, NULL, NULL);
+		relStats_entry = relStats_insert(hash, rnode, &found);
+		relStats_entry->stats.count++;
+		relStats_entry->stats.rec_len += rec_len;
+		relStats_entry->stats.fpi_len += fpi_len;
+	}
 }
 
 /*
@@ -648,22 +710,12 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 					tot_len;
 		const RmgrDescData *desc = &RmgrDescTable[ri];
 
-		if (!config->stats_per_record)
-		{
-			count = stats->rmgr_stats[ri].count;
-			rec_len = stats->rmgr_stats[ri].rec_len;
-			fpi_len = stats->rmgr_stats[ri].fpi_len;
-			tot_len = rec_len + fpi_len;
-
-			XLogDumpStatsRow(desc->rm_name,
-							 count, total_count, rec_len, total_rec_len,
-							 fpi_len, total_fpi_len, tot_len, total_len);
-		}
-		else
+		if (config->stats_per_record)
 		{
 			for (rj = 0; rj < MAX_XLINFO_TYPES; rj++)
 			{
 				const char *id;
+				relStats_hash *hash;
 
 				count = stats->record_stats[ri][rj].count;
 				rec_len = stats->record_stats[ri][rj].rec_len;
@@ -682,7 +734,37 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 				XLogDumpStatsRow(psprintf("%s/%s", desc->rm_name, id),
 								 count, total_count, rec_len, total_rec_len,
 								 fpi_len, total_fpi_len, tot_len, total_len);
+
+				hash = stats->rel_stats[ri][rj];
+				if (hash != NULL) {
+					RelStatsEntry *entry;
+					relStats_iterator i;
+					relStats_start_iterate(hash, &i);
+
+					while ((entry = relStats_iterate(hash, &i)) != NULL)
+					{
+						Stats *relStats = &entry->stats;
+						count = relStats->count;
+						rec_len = relStats->rec_len;
+						fpi_len = relStats->fpi_len;
+
+						XLogDumpStatsRow(psprintf(" %u", entry->relFileNode.relNode),
+										 count, total_count, rec_len, total_rec_len,
+										 fpi_len, total_fpi_len, tot_len, total_len);
+					}
+				}
 			}
+		}
+		else
+		{
+			count = stats->rmgr_stats[ri].count;
+			rec_len = stats->rmgr_stats[ri].rec_len;
+			fpi_len = stats->rmgr_stats[ri].fpi_len;
+			tot_len = rec_len + fpi_len;
+
+			XLogDumpStatsRow(desc->rm_name,
+							 count, total_count, rec_len, total_rec_len,
+							 fpi_len, total_fpi_len, tot_len, total_len);
 		}
 	}
 
@@ -715,6 +797,62 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 		   total_len, "[100%]");
 }
 
+static bool
+isXactAborted(TransactionId xid)
+{
+	slist_iter	iter;
+
+	slist_foreach(iter, &xact_states)
+	{
+		XactState  *xact_state = slist_container(XactState, xact_link, iter.cur);
+
+		if (xact_state->xid != xid)
+		{
+			continue;
+		}
+		return xact_state->aborted;
+	}
+	return false;
+}
+
+static void
+XLogBuildAbortedXactList(XLogReaderState *xlogreader_state)
+{
+	char	   *errormsg;
+	XLogRecord *record;
+
+	for (;;)
+	{
+		uint8		info;
+
+		record = XLogReadRecord(xlogreader_state, &errormsg);
+		if (!record)
+			break;
+
+		if (record->xl_rmid != RM_XACT_ID)
+			continue;
+
+		info = XLogRecGetInfo(xlogreader_state) & XLOG_XACT_OPMASK;
+
+		if (info == XLOG_XACT_ABORT || info == XLOG_XACT_ABORT_PREPARED)
+		{
+			XactState  *a = palloc(sizeof(XactState));
+
+			a->xid = XLogRecGetXid(xlogreader_state);
+			a->aborted = true;
+			slist_push_head(&xact_states, &a->xact_link);
+		}
+		else if (info == XLOG_XACT_COMMIT)
+		{
+			XactState  *a = palloc(sizeof(XactState));
+
+			a->xid = XLogRecGetXid(xlogreader_state);
+			a->aborted = false;
+			slist_push_head(&xact_states, &a->xact_link);
+		}
+	}
+}
+
 static void
 usage(void)
 {
@@ -738,7 +876,7 @@ usage(void)
 			 "                         (default: 1 or the value used in STARTSEG)\n"));
 	printf(_("  -V, --version          output version information, then exit\n"));
 	printf(_("  -x, --xid=XID          only show records with transaction ID XID\n"));
-	printf(_("  -z, --stats[=record]   show statistics instead of records\n"
+	printf(_("  -z, --stats[=record|=rel]   show statistics instead of records\n"
 			 "                         (optionally, show per-record statistics)\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
 	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
@@ -760,6 +898,7 @@ main(int argc, char **argv)
 	char	   *errormsg;
 
 	static struct option long_options[] = {
+		{"aborted-xact", no_argument, NULL, 'a'},
 		{"bkp-details", no_argument, NULL, 'b'},
 		{"end", required_argument, NULL, 'e'},
 		{"follow", no_argument, NULL, 'f'},
@@ -814,8 +953,10 @@ main(int argc, char **argv)
 	config.filter_by_rmgr = -1;
 	config.filter_by_xid = InvalidTransactionId;
 	config.filter_by_xid_enabled = false;
+	config.filter_only_aborted_xact = false;
 	config.stats = false;
 	config.stats_per_record = false;
+	config.stats_per_rel = false;
 
 	if (argc <= 1)
 	{
@@ -823,11 +964,14 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "be:fn:p:qr:s:t:x:z",
+	while ((option = getopt_long(argc, argv, "abe:fn:p:qr:s:t:x:z",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
 		{
+			case 'a':
+				config.filter_only_aborted_xact = true;
+				break;
 			case 'b':
 				config.bkp_details = true;
 				break;
@@ -912,10 +1056,15 @@ main(int argc, char **argv)
 			case 'z':
 				config.stats = true;
 				config.stats_per_record = false;
+				config.stats_per_rel = false;
 				if (optarg)
 				{
 					if (strcmp(optarg, "record") == 0)
 						config.stats_per_record = true;
+					else if (strcmp(optarg, "rel") == 0) {
+						config.stats_per_record = true;
+						config.stats_per_rel = true;
+					}
 					else if (strcmp(optarg, "rmgr") != 0)
 					{
 						pg_log_error("unrecognized argument to --stats: %s",
@@ -1068,6 +1217,19 @@ main(int argc, char **argv)
 			   LSN_FORMAT_ARGS(first_record),
 			   (uint32) (first_record - private.startptr));
 
+	if (config.filter_only_aborted_xact)
+	{
+		XLogReaderState *reader = XLogReaderAllocate(WalSegSz, waldir,
+													 XL_ROUTINE(.page_read = WALDumpReadPage,
+																.segment_open = WALDumpOpenSegment,
+																.segment_close = WALDumpCloseSegment),
+													 &private);
+
+		XLogFindNextRecord(reader, private.startptr);
+		XLogBuildAbortedXactList(reader);
+		XLogReaderFree(reader);
+	}
+
 	for (;;)
 	{
 		/* try to read the next record */
@@ -1091,6 +1253,14 @@ main(int argc, char **argv)
 		if (config.filter_by_xid_enabled &&
 			config.filter_by_xid != record->xl_xid)
 			continue;
+
+		if (config.filter_only_aborted_xact)
+		{
+			TransactionId xid = XLogRecGetXid(xlogreader_state);
+
+			if (!isXactAborted(xid))
+				continue;
+		}
 
 		/* perform any per-record work */
 		if (!config.quiet)
