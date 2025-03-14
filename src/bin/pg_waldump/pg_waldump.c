@@ -52,6 +52,7 @@ typedef struct XLogDumpConfig
 	bool		stats_per_record;
 	bool		stats_per_rel;
 	int			limit_relations;
+	bool		rel_details;
 
 	/* filter options */
 	int			filter_by_rmgr;
@@ -744,6 +745,7 @@ static char *
 relnodeToRelname(XLogDumpConfig *config, RelFileNode relnode)
 {
 	RelMappingEntry *relmapping_entry;
+	char *res;
 
 	if (relmapping_hash == NULL)
 		return psprintf("|%u/%u/%u", relnode.spcNode, relnode.dbNode,
@@ -755,11 +757,15 @@ relnodeToRelname(XLogDumpConfig *config, RelFileNode relnode)
 						relnode.relNode);
 
 	if (relmapping_entry->parent_relname != NULL)
-		return psprintf("|%s (toast) (%u/%u/%u)", relmapping_entry->parent_relname,
-						relnode.spcNode, relnode.dbNode, relnode.relNode);
+		res = psprintf("|%s (toast)", relmapping_entry->parent_relname);
 	else
-		return psprintf("|%s (%u/%u/%u)", relmapping_entry->relname, relnode.spcNode,
+		res = psprintf("|%s", relmapping_entry->relname);
+
+	if (config->rel_details)
+		res = psprintf("%s (%u/%u/%u)", res, relnode.spcNode,
 						relnode.dbNode, relnode.relNode);
+
+	return res;
 }
 
 /*
@@ -1147,6 +1153,7 @@ main(int argc, char **argv)
 	static struct option long_options[] = {
 		{"aborted-xact", no_argument, NULL, 'a'},
 		{"bkp-details", no_argument, NULL, 'b'},
+		{"rel-details", no_argument, NULL, 'd'},
 		{"end", required_argument, NULL, 'e'},
 		{"follow", no_argument, NULL, 'f'},
 		{"help", no_argument, NULL, '?'},
@@ -1197,6 +1204,7 @@ main(int argc, char **argv)
 
 	config.quiet = false;
 	config.bkp_details = false;
+	config.rel_details = false;
 	config.stop_after_records = -1;
 	config.already_displayed_records = 0;
 	config.follow = false;
@@ -1217,7 +1225,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "abe:fl:m:n:p:qr:R:s:t:x:z",
+	while ((option = getopt_long(argc, argv, "abde:fl:m:n:p:qr:R:s:t:x:z",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -1227,6 +1235,9 @@ main(int argc, char **argv)
 				break;
 			case 'b':
 				config.bkp_details = true;
+				break;
+			case 'd':
+				config.rel_details = true;
 				break;
 			case 'e':
 				if (sscanf(optarg, "%X/%X", &xlogid, &xrecoff) != 2)
