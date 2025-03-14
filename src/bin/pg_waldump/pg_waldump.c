@@ -115,9 +115,9 @@ typedef struct ResourceStats
 typedef struct _relMappingEntry
 {
 	Oid			relfilenode;
-	Oid			oid;
 	char	   *relname;
-	char	   *parent_relname;
+	char	   *toast_parent;
+	char	   *toast_index_parent;
 	uint32		status;			/* hash status */
 }			RelMappingEntry;
 
@@ -745,7 +745,7 @@ static char *
 relnodeToRelname(XLogDumpConfig *config, RelFileNode relnode)
 {
 	RelMappingEntry *relmapping_entry;
-	char *res;
+	char	   *res;
 
 	if (relmapping_hash == NULL)
 		return psprintf("|%u/%u/%u", relnode.spcNode, relnode.dbNode,
@@ -756,14 +756,16 @@ relnodeToRelname(XLogDumpConfig *config, RelFileNode relnode)
 		return psprintf("|%u/%u/%u", relnode.spcNode, relnode.dbNode,
 						relnode.relNode);
 
-	if (relmapping_entry->parent_relname != NULL)
-		res = psprintf("|%s (toast)", relmapping_entry->parent_relname);
+	if (relmapping_entry->toast_parent != NULL)
+		res = psprintf("|%s (toast)", relmapping_entry->toast_parent);
+	else if (relmapping_entry->toast_index_parent != NULL)
+		res = psprintf("|%s (toast index)", relmapping_entry->toast_index_parent);
 	else
 		res = psprintf("|%s", relmapping_entry->relname);
 
 	if (config->rel_details)
 		res = psprintf("%s (%u/%u/%u)", res, relnode.spcNode,
-						relnode.dbNode, relnode.relNode);
+					   relnode.dbNode, relnode.relNode);
 
 	return res;
 }
@@ -1029,16 +1031,16 @@ readRelMappingFile(char *relmapping_file)
 	{
 		RelMappingEntry *entry;
 		Oid			relfilenode;
-		Oid			oid;
 		char	   *relname;
-		char	   *parent_relname;
+		char	   *toast_parent;
+		char	   *toast_index_parent;
 		int			len;
 		bool		found;
 
 		linenr++;
 
 		/* skip header */
-		if (linenr == 0)
+		if (linenr == 1)
 			continue;
 
 		if (strlen(line) >= sizeof(buf) - 1)
@@ -1056,19 +1058,21 @@ readRelMappingFile(char *relmapping_file)
 		while (*line && isspace((unsigned char) line[0]))
 			line++;
 
-		/* relfilenode,relname,oid,parent relname */
-		relfilenode = atoi(strtok(line, ","));
-		relname = strtok(NULL, ",");
-		oid = atoi(strtok(NULL, ","));
-		parent_relname = strtok(NULL, ",");
+		/* relfilenode,relname,toast parent,toast index parent */
+		relfilenode = atoi(strsep(&line, ","));
+		relname = strsep(&line, ",");
+		toast_parent = strsep(&line, ",");
+		toast_index_parent = strsep(&line, ",");
 
 		entry = relMapping_insert(relmapping_hash, relfilenode, &found);
 		Assert(found == false);
+
 		entry->relfilenode = relfilenode;
-		entry->oid = oid;
 		entry->relname = strdup(relname);
-		if (parent_relname != NULL)
-			entry->parent_relname = strdup(parent_relname);
+		if (toast_parent != NULL)
+			entry->toast_parent = strdup(toast_parent);
+		if (toast_index_parent != NULL)
+			entry->toast_index_parent = strdup(toast_index_parent);
 	}
 
 exit:
