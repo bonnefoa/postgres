@@ -12,6 +12,7 @@ OBJS = \
 	$(WIN32RES) \
 	compat.o \
 	pg_waldump.o \
+	output.o \
 	rmgrdesc.o \
 	xlogreader.o
 
