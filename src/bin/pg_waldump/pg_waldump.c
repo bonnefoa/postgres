@@ -24,6 +24,7 @@
 #include "common/fe_memutils.h"
 #include "common/hashfn.h"
 #include "common/logging.h"
+#include "common/string.h"
 #include "getopt_long.h"
 #include "rmgrdesc.h"
 
@@ -50,12 +51,19 @@ typedef struct XLogDumpConfig
 	bool		stats;
 	bool		stats_per_record;
 	bool		stats_per_rel;
+	int			limit_relations;
 
 	/* filter options */
 	int			filter_by_rmgr;
 	TransactionId filter_by_xid;
+	RelFileNode filter_by_relation;
+
 	bool		filter_by_xid_enabled;
 	bool		filter_only_aborted_xact;
+
+	bool		filter_by_extended;
+	bool		filter_by_relation_enabled;
+
 } XLogDumpConfig;
 
 typedef struct Stats
@@ -454,6 +462,30 @@ WALDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 }
 
 /*
+ * Boolean to return whether the given WAL record matches a specific relation
+ * and optionally block.
+ */
+static bool
+XLogRecordMatchesRelationBlock(XLogReaderState *record,
+							   RelFileNode matchRlocator)
+{
+	int			block_id;
+
+	for (block_id = 0; block_id <= record->max_block_id; block_id++)
+	{
+		RelFileNode rlocator;
+
+		if (!XLogRecGetBlockTag(record, block_id, &rlocator, NULL, NULL))
+			continue;
+
+		if (RelFileNodeEquals(matchRlocator, rlocator))
+			return true;
+	}
+
+	return false;
+}
+
+/*
  * Calculate the size of a record, split into !FPI and FPI parts.
  */
 static void
@@ -709,21 +741,25 @@ XLogDumpStatsRow(const char *name,
 }
 
 static char *
-relnodeToRelname(Oid relnode)
+relnodeToRelname(XLogDumpConfig *config, RelFileNode relnode)
 {
 	RelMappingEntry *relmapping_entry;
 
 	if (relmapping_hash == NULL)
-		return psprintf(" %u", relnode);
+		return psprintf("|%u/%u/%u", relnode.spcNode, relnode.dbNode,
+						relnode.relNode);
 
-	relmapping_entry = relMapping_lookup(relmapping_hash, relnode);
+	relmapping_entry = relMapping_lookup(relmapping_hash, relnode.relNode);
 	if (relmapping_entry == NULL)
-		return psprintf(" %u", relnode);
+		return psprintf("|%u/%u/%u", relnode.spcNode, relnode.dbNode,
+						relnode.relNode);
 
 	if (relmapping_entry->parent_relname != NULL)
-		return psprintf(" %s (toast)", relmapping_entry->parent_relname);
+		return psprintf("|%s (toast) (%u/%u/%u)", relmapping_entry->parent_relname,
+						relnode.spcNode, relnode.dbNode, relnode.relNode);
 	else
-		return psprintf(" %s", relmapping_entry->relname);
+		return psprintf("|%s (%u/%u/%u)", relmapping_entry->relname, relnode.spcNode,
+						relnode.dbNode, relnode.relNode);
 }
 
 /*
@@ -759,7 +795,9 @@ ResourceStatsCompare(const void *p1, const void *p2)
 }
 
 static void
-XLogDumpDisplayPerRelStats(relStats_hash * relStatsHash, uint64 total_count, uint64 total_rec_len, uint64 total_fpi_len, uint64 total_len)
+XLogDumpDisplayPerRelStats(XLogDumpConfig *config, relStats_hash * relStatsHash,
+						   uint64 total_count, uint64 total_rec_len,
+						   uint64 total_fpi_len, uint64 total_len)
 {
 	RelStatsEntry *relstats_entry;
 	relStats_iterator iter;
@@ -782,10 +820,9 @@ XLogDumpDisplayPerRelStats(relStats_hash * relStatsHash, uint64 total_count, uin
 		RelStatsEntry *relstatsEntry = relstatsArray[i];
 		Stats	   *relStats = &relstatsEntry->stats;
 
-		/* TODO: Make this configurable */
-		if (n > 10)
+		if (config->limit_relations > 0 && n >= config->limit_relations)
 			break;
-		relname = relnodeToRelname(relstatsEntry->relFileNode.relNode);
+		relname = relnodeToRelname(config, relstatsEntry->relFileNode);
 
 		XLogDumpStatsRow(relname,
 						 relStats->count, total_count, relStats->rec_len, total_rec_len,
@@ -888,7 +925,8 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 
 			relStatsHash = stats->rel_stats[ri][rj];
 			if (relStatsHash != NULL)
-				XLogDumpDisplayPerRelStats(relStatsHash, total_count, total_rec_len, total_fpi_len, total_len);
+				XLogDumpDisplayPerRelStats(config, relStatsHash, total_count,
+										   total_rec_len, total_fpi_len, total_len);
 
 			printf("\n");
 		}
@@ -920,8 +958,8 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 				continue;
 
 			XLogDumpStatsRow(desc->rm_name,
-					count, total_count, rec_len, total_rec_len,
-					fpi_len, total_fpi_len, tot_len, total_len);
+							 count, total_count, rec_len, total_rec_len,
+							 fpi_len, total_fpi_len, tot_len, total_len);
 		}
 	}
 
@@ -1114,8 +1152,10 @@ main(int argc, char **argv)
 		{"help", no_argument, NULL, '?'},
 		{"relmapping", optional_argument, NULL, 'm'},
 		{"limit", required_argument, NULL, 'n'},
+		{"limit-relations", required_argument, NULL, 'l'},
 		{"path", required_argument, NULL, 'p'},
 		{"quiet", no_argument, NULL, 'q'},
+		{"relation", required_argument, NULL, 'R'},
 		{"rmgr", required_argument, NULL, 'r'},
 		{"start", required_argument, NULL, 's'},
 		{"timeline", required_argument, NULL, 't'},
@@ -1164,8 +1204,11 @@ main(int argc, char **argv)
 	config.filter_by_xid = InvalidTransactionId;
 	config.filter_by_xid_enabled = false;
 	config.filter_only_aborted_xact = false;
+	config.filter_by_relation_enabled = false;
+	config.filter_by_extended = false;
 	config.stats = false;
 	config.stats_per_record = false;
+	config.limit_relations = 10;
 	config.stats_per_rel = false;
 
 	if (argc <= 1)
@@ -1174,7 +1217,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "abe:fm:n:p:qr:s:t:x:z",
+	while ((option = getopt_long(argc, argv, "abe:fl:m:n:p:qr:R:s:t:x:z",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -1197,6 +1240,25 @@ main(int argc, char **argv)
 			case 'f':
 				config.follow = true;
 				break;
+			case 'l':
+				{
+					char	   *endptr;
+					int			val;
+
+					val = strtoint(optarg, &endptr, 0);
+
+					while (*endptr != '\0' && isspace((unsigned char) *endptr))
+						endptr++;
+
+					if (*endptr != '\0')
+					{
+						pg_log_error("invalid value \"%s\" for option %s",
+									 optarg, "-l/--limit-relations");
+						goto bad_argument;
+					}
+					config.limit_relations = val;
+					break;
+				}
 			case 'm':
 				relmapping_file = pg_strdup(optarg);
 				break;
@@ -1239,6 +1301,19 @@ main(int argc, char **argv)
 						goto bad_argument;
 					}
 				}
+				break;
+			case 'R':
+				if (sscanf(optarg, "%u/%u/%u",
+						   &config.filter_by_relation.spcNode,
+						   &config.filter_by_relation.dbNode,
+						   &config.filter_by_relation.relNode) != 3 ||
+					!OidIsValid(config.filter_by_relation.spcNode))
+				{
+					pg_log_error("invalid relation specification: \"%s\"", optarg);
+					goto bad_argument;
+				}
+				config.filter_by_relation_enabled = true;
+				config.filter_by_extended = true;
 				break;
 			case 's':
 				if (sscanf(optarg, "%X/%X", &xlogid, &xrecoff) != 2)
@@ -1475,6 +1550,13 @@ main(int argc, char **argv)
 		if (config.filter_by_xid_enabled &&
 			config.filter_by_xid != record->xl_xid)
 			continue;
+
+		/* check for extended filtering */
+		if (config.filter_by_extended &&
+			!XLogRecordMatchesRelationBlock(xlogreader_state,
+											config.filter_by_relation))
+			continue;
+
 
 		if (config.filter_only_aborted_xact)
 		{
