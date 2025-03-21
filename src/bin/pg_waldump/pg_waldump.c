@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "access/heapam_xlog.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlog_internal.h"
@@ -467,6 +468,63 @@ XLogDumpCountRecord(XLogDumpConfig *config, XLogDumpStats *stats,
 	}
 }
 
+// static void dumpHex(const void* data, size_t size) {
+// 	char ascii[33];
+// 	size_t i, j;
+// 	ascii[32] = '\0';
+// 	for (i = 0; i < size; ++i) {
+// 		printf("%02X ", ((unsigned char*)data)[i]);
+// 		if (((unsigned char*)data)[i] >= ' ' && ((unsigned char*)data)[i] <= '~') {
+// 			ascii[i % 32] = ((unsigned char*)data)[i];
+// 		} else {
+// 			ascii[i % 32] = '.';
+// 		}
+// 		if ((i+1) % 8 == 0 || i+1 == size) {
+// 			printf(" ");
+// 			if ((i+1) % 32 == 0) {
+// 				printf("|  %s \n", ascii);
+// 			} else if (i+1 == size) {
+// 				ascii[(i+1) % 32] = '\0';
+// 				if ((i+1) % 32 <= 8) {
+// 					printf(" ");
+// 				}
+// 				for (j = (i+1) % 32; j < 32; ++j) {
+// 					printf("   ");
+// 				}
+// 				printf("|  %s \n", ascii);
+// 			}
+// 		}
+// 	}
+// }
+
+static void dumpHex(const void* data, size_t size) {
+	char ascii[129];
+	size_t i;
+	ascii[128] = '\0';
+	for (i = 0; i < size; ++i) {
+		if (((unsigned char*)data)[i] >= ' ' && ((unsigned char*)data)[i] <= '~') {
+			ascii[i % 128] = ((unsigned char*)data)[i];
+		} else {
+			ascii[i % 128] = '.';
+		}
+		if ((i+1) % 128 == 0) {
+			printf("|  %s \n", ascii);
+		} else if (i+1 == size) {
+			ascii[(i+1) % 128] = '\0';
+			printf("|  %s \n", ascii);
+		}
+	}
+}
+
+static void
+XLogDumpBlockDetails(XLogDumpConfig *config, XLogReaderState *record)
+{
+	Size		datalen = 0;
+	char	   *recdata;
+	recdata = XLogRecGetBlockData(record, 0, &datalen);
+	dumpHex(recdata, datalen);
+}
+
 /*
  * Print a record to stdout
  */
@@ -576,6 +634,10 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 			}
 			putchar('\n');
 		}
+	}
+
+	if (config->block_details) {
+		XLogDumpBlockDetails(config, record);
 	}
 }
 
@@ -786,6 +848,7 @@ main(int argc, char **argv)
 	config.quiet = false;
 	config.bkp_details = false;
 	config.rel_details = false;
+	config.block_details = false;
 	config.stop_after_records = -1;
 	config.already_displayed_records = 0;
 	config.follow = false;
@@ -806,7 +869,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "abde:fl:m:n:p:qr:R:s:t:x:z",
+	while ((option = getopt_long(argc, argv, "abBde:fl:m:n:p:qr:R:s:t:x:z",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -816,6 +879,9 @@ main(int argc, char **argv)
 				break;
 			case 'b':
 				config.bkp_details = true;
+				break;
+			case 'B':
+				config.block_details = true;
 				break;
 			case 'd':
 				config.rel_details = true;

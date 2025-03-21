@@ -32,6 +32,7 @@ typedef struct XLogDumpConfig
 	bool		stats_per_rel;
 	int			limit_relations;
 	bool		rel_details;
+	bool		block_details;
 
 	/* filter options */
 	int			filter_by_rmgr;
