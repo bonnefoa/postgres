@@ -671,6 +671,7 @@ readRelMappingFile(char *relmapping_file)
 		RelMappingEntry *entry;
 		Oid			relfilenode;
 		char	   *relname;
+		char	   *oid;
 		char	   *toast_parent;
 		char	   *toast_index_parent;
 		int			len;
@@ -699,6 +700,7 @@ readRelMappingFile(char *relmapping_file)
 
 		/* relfilenode,relname,toast parent,toast index parent */
 		relfilenode = atoi(strsep(&line, ","));
+		oid = strsep(&line, ",");
 		relname = strsep(&line, ",");
 		toast_parent = strsep(&line, ",");
 		toast_index_parent = strsep(&line, ",");
@@ -708,9 +710,9 @@ readRelMappingFile(char *relmapping_file)
 
 		entry->relfilenode = relfilenode;
 		entry->relname = strdup(relname);
-		if (toast_parent != NULL)
+		if (toast_parent != NULL && strcmp(toast_parent, "") > 0)
 			entry->toast_parent = strdup(toast_parent);
-		if (toast_index_parent != NULL)
+		if (toast_index_parent != NULL && strcmp(toast_parent, "") > 0)
 			entry->toast_index_parent = strdup(toast_index_parent);
 	}
 
