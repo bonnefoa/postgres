@@ -1285,6 +1285,14 @@ heap_endscan(TableScanDesc sscan)
 		ReleaseBuffer(scan->rs_cbuf);
 
 	/*
+	 * If we're the leader of a parallel seq scan, or it's a single copy seq
+	 * scan, reset scan position to back to 0.
+	 */
+	if (scan->rs_base.rs_flags & SO_ALLOW_SYNC &&
+		(scan->rs_parallelworkerdata == NULL || !IsParallelWorker()))
+		ss_report_location(scan->rs_base.rs_rd, 0);
+
+	/*
 	 * Must free the read stream before freeing the BufferAccessStrategy.
 	 */
 	if (scan->rs_read_stream)
