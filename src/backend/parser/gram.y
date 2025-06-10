@@ -154,7 +154,8 @@ static void base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner,
 						 const char *msg);
 static RawStmt *makeRawStmt(Node *stmt, int stmt_location);
 static void updateRawStmtEnd(RawStmt *rs, int end_location);
-static void updatePreparableStmtEnd(Node *n, int end_location);
+static void updatePreparableStmtEnd(Node *n, int location, int len);
+static void updateSelectStmtEnd(Node *n, int end_location);
 static Node *makeColumnRef(char *colname, List *indirection,
 						   int location, core_yyscan_t yyscanner);
 static Node *makeTypeCast(Node *arg, TypeName *typename, int location);
@@ -3417,9 +3418,9 @@ CopyStmt:	COPY opt_binary qualified_name opt_column_list
 				{
 					CopyStmt *n = makeNode(CopyStmt);
 
-					updatePreparableStmtEnd($3, @4);
 					n->relation = NULL;
 					n->query = $3;
+					updatePreparableStmtEnd($3, @2, @4 - @2);
 					n->attlist = NIL;
 					n->is_from = false;
 					n->is_program = $6;
@@ -4805,6 +4806,7 @@ CreateAsStmt:
 					CreateTableAsStmt *ctas = makeNode(CreateTableAsStmt);
 
 					ctas->query = $6;
+					updateSelectStmtEnd($6, @7);
 					ctas->into = $4;
 					ctas->objtype = OBJECT_TABLE;
 					ctas->is_select_into = false;
@@ -4819,6 +4821,7 @@ CreateAsStmt:
 					CreateTableAsStmt *ctas = makeNode(CreateTableAsStmt);
 
 					ctas->query = $9;
+					updateSelectStmtEnd($9, @10);
 					ctas->into = $7;
 					ctas->objtype = OBJECT_TABLE;
 					ctas->is_select_into = false;
@@ -12828,18 +12831,19 @@ select_with_parens:
 			'(' select_no_parens ')'
 				{
 					SelectStmt *n = (SelectStmt *) $2;
-
-					/*
-					 * As SelectStmt's location starts at the SELECT keyword,
-					 * we need to track the length of the SelectStmt within
-					 * parentheses to be able to extract the relevant part
-					 * of the query.  Without this, the RawStmt's length would
-					 * be used and would include the closing parenthesis.
+					/* With queries like '(SELECT 1) limit 1', parentheses are part of the
+					 * query so we need to move the location of the select stmt to the '('
 					 */
-					n->stmt_len = @3 - @2;
+					n->stmt_location = @1;
 					$$ = $2;
 				}
-			| '(' select_with_parens ')'			{ $$ = $2; }
+			| '(' select_with_parens ')'
+				{
+					SelectStmt *n = (SelectStmt *) $2;
+					/* Track the outermost '(' as the select statement start */
+					n->stmt_location = @1;
+					$$ = $2;
+				}
 		;
 
 /*
@@ -18753,41 +18757,58 @@ updateRawStmtEnd(RawStmt *rs, int end_location)
  * string.
  */
 static void
-updatePreparableStmtEnd(Node *n, int end_location)
+updatePreparableStmtEnd(Node *n, int location, int len)
 {
 	if (IsA(n, SelectStmt))
 	{
 		SelectStmt *stmt = (SelectStmt *) n;
 
-		stmt->stmt_len = end_location - stmt->stmt_location;
+		stmt->stmt_location = location;
+		stmt->stmt_len = len;
 	}
 	else if (IsA(n, InsertStmt))
 	{
 		InsertStmt *stmt = (InsertStmt *) n;
 
-		stmt->stmt_len = end_location - stmt->stmt_location;
+		stmt->stmt_location = location;
+		stmt->stmt_len = len;
 	}
 	else if (IsA(n, UpdateStmt))
 	{
 		UpdateStmt *stmt = (UpdateStmt *) n;
 
-		stmt->stmt_len = end_location - stmt->stmt_location;
+		stmt->stmt_location = location;
+		stmt->stmt_len = len;
 	}
 	else if (IsA(n, DeleteStmt))
 	{
 		DeleteStmt *stmt = (DeleteStmt *) n;
 
-		stmt->stmt_len = end_location - stmt->stmt_location;
+		stmt->stmt_location = location;
+		stmt->stmt_len = len;
 	}
 	else if (IsA(n, MergeStmt))
 	{
 		MergeStmt  *stmt = (MergeStmt *) n;
 
-		stmt->stmt_len = end_location - stmt->stmt_location;
+		stmt->stmt_location = location;
+		stmt->stmt_len = len;
 	}
 	else
 		elog(ERROR, "unexpected node type %d", (int) n->type);
 }
+
+/*
+ * Adjust SelectStmt's length if we have a known end location
+ */
+static void
+updateSelectStmtEnd(Node *n, int end_location)
+{
+	SelectStmt *stmt = (SelectStmt *) n;
+	if (end_location > -1)
+		stmt->stmt_len = end_location - stmt->stmt_location;
+}
+
 
 static Node *
 makeColumnRef(char *colname, List *indirection,

@@ -65,6 +65,9 @@ SELECT 1 AS i UNION SELECT 2 ORDER BY i;
 -- ? operator
 select '{"a":1, "b":2}'::jsonb ? 'b';
 
+-- values with limit
+(values(1)) limit 1;
+
 -- cte
 WITH t(f) AS (
   VALUES (1.0), (2.0)

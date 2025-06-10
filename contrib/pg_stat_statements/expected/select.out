@@ -185,6 +185,13 @@ select '{"a":1, "b":2}'::jsonb ? 'b';
  t
 (1 row)
 
+-- values with limit
+(values(1)) limit 1;
+ column1 
+---------
+       1
+(1 row)
+
 -- cte
 WITH t(f) AS (
   VALUES (1.0), (2.0)
@@ -208,6 +215,7 @@ DEALLOCATE pgss_test;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
  calls | rows |                                    query                                     
 -------+------+------------------------------------------------------------------------------
+     1 |    1 | (values($1)) limit $2
      4 |    4 | SELECT $1                                                                   +
        |      |   -- but this one will appear                                               +
        |      |   AS "text"
@@ -230,7 +238,7 @@ SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
        |      | )                                                                           +
        |      |   SELECT f FROM t ORDER BY f
      1 |    1 | select $1::jsonb ? $2
-(17 rows)
+(18 rows)
 
 SELECT pg_stat_statements_reset() IS NOT NULL AS t;
  t 

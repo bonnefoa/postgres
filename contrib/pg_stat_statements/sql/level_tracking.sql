@@ -225,15 +225,21 @@ SET pg_stat_statements.track = 'all';
 PREPARE test_prepare_pgss AS select generate_series(1, 10);
 SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 CREATE TEMPORARY TABLE pgss_ctas_1 AS SELECT 1;
-CREATE TEMPORARY TABLE pgss_ctas_2 AS EXECUTE test_prepare_pgss;
+CREATE TEMPORARY TABLE pgss_ctas_2 AS SELECT 1 as a, 2 as b WITH DATA;
+CREATE TEMPORARY TABLE pgss_ctas_3 AS EXECUTE test_prepare_pgss;
+CREATE TEMPORARY TABLE pgss_ctas_5 AS (SELECT (SELECT 2)) WITH DATA;
+CREATE TEMPORARY TABLE pgss_ctas_6 AS (SELECT (SELECT ((SELECT 3)) limit 1) order by 1) WITH DATA;
+CREATE TEMPORARY TABLE pgss_ctas_7 AS (SELECT (SELECT (SELECT 3))) WITH NO DATA;
+CREATE TEMPORARY TABLE IF NOT EXISTS pgss_ctas_8 AS SELECT 1 as a;
+CREATE TEMPORARY TABLE IF NOT EXISTS pgss_ctas_9 AS ((SELECT 1 as b) limit 1) WITH DATA;
 SELECT toplevel, calls, query FROM pg_stat_statements
   ORDER BY query COLLATE "C";
 
 -- CREATE TABLE AS, top-level tracking.
 SET pg_stat_statements.track = 'top';
 SELECT pg_stat_statements_reset() IS NOT NULL AS t;
-CREATE TEMPORARY TABLE pgss_ctas_3 AS SELECT 1;
-CREATE TEMPORARY TABLE pgss_ctas_4 AS EXECUTE test_prepare_pgss;
+CREATE TEMPORARY TABLE pgss_ctas_top_1 AS SELECT 1;
+CREATE TEMPORARY TABLE pgss_ctas_top_2 AS EXECUTE test_prepare_pgss;
 SELECT toplevel, calls, query FROM pg_stat_statements
   ORDER BY query COLLATE "C";
 
