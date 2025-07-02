@@ -220,6 +220,7 @@ ReplicationSlotsShmemInit(void)
 
 		/* First time through, so initialize */
 		MemSet(ReplicationSlotCtl, 0, ReplicationSlotsShmemSize());
+		pg_atomic_init_u32(&ReplicationSlotCtl->used_replication_slots, 0);
 
 		for (i = 0; i < max_replication_slots; i++)
 		{
@@ -522,6 +523,9 @@ ReplicationSlotCreate(const char *name, bool db_specific,
 	if (SlotIsLogical(slot))
 		pgstat_create_replslot(slot);
 
+	/* Update the used_replication_slots counter with the created slot */
+	pg_atomic_fetch_add_u32(&ReplicationSlotCtl->used_replication_slots, 1);
+
 	/*
 	 * Now that the slot has been marked as in_use and active, it's safe to
 	 * let somebody else try to allocate a slot.
@@ -577,6 +581,15 @@ ReplicationSlotIndex(ReplicationSlot *slot)
 		   slot < ReplicationSlotCtl->replication_slots + max_replication_slots);
 
 	return slot - ReplicationSlotCtl->replication_slots;
+}
+
+/*
+ * Return the number of used replication slots
+ */
+int
+ReplicationSlotNumUsed(void)
+{
+	return pg_atomic_read_u32(&ReplicationSlotCtl->used_replication_slots);
 }
 
 /*
@@ -1142,6 +1155,9 @@ ReplicationSlotDropPtr(ReplicationSlot *slot)
 	 */
 	if (SlotIsLogical(slot))
 		pgstat_drop_replslot(slot);
+
+	/* Decrement the used_replication_slots counter */
+	pg_atomic_sub_fetch_u32(&ReplicationSlotCtl->used_replication_slots, 1);
 
 	/*
 	 * We release this at the very end, so that nobody starts trying to create

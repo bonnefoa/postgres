@@ -292,11 +292,10 @@ typedef struct ReplicationSlot
  */
 typedef struct ReplicationSlotCtlData
 {
-	/*
-	 * This array should be declared [FLEXIBLE_ARRAY_MEMBER], but for some
-	 * reason you can't do that in an otherwise-empty struct.
-	 */
-	ReplicationSlot replication_slots[1];
+	/* Number of used replication slots */
+	pg_atomic_uint32 used_replication_slots;
+
+	ReplicationSlot replication_slots[FLEXIBLE_ARRAY_MEMBER];
 } ReplicationSlotCtlData;
 
 /*
@@ -370,6 +369,7 @@ extern bool InvalidateObsoleteReplicationSlots(uint32 possible_causes,
 											   TransactionId snapshotConflictHorizon);
 extern ReplicationSlot *SearchNamedReplicationSlot(const char *name, bool need_lock);
 extern int	ReplicationSlotIndex(ReplicationSlot *slot);
+extern int	ReplicationSlotNumUsed(void);
 extern bool ReplicationSlotName(int index, Name name);
 extern void ReplicationSlotNameForTablesync(Oid suboid, Oid relid, char *syncslotname, Size szslot);
 extern void ReplicationSlotDropAtPubNode(WalReceiverConn *wrconn, char *slotname, bool missing_ok);

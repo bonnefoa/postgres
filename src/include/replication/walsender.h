@@ -48,6 +48,7 @@ extern void WalSndInitStopping(void);
 extern void WalSndWaitStopping(void);
 extern void HandleWalSndInitStopping(void);
 extern void WalSndRqstFileReload(void);
+extern int	WalSndNumActive(void);
 
 /*
  * Remember that we want to wakeup walsenders later

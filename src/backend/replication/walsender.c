@@ -3092,7 +3092,7 @@ InitWalSenderSlot(void)
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */
 			MyWalSnd = walsnd;
-
+			pg_atomic_fetch_add_u32(&WalSndCtl->active_wal_senders, 1);
 			break;
 		}
 	}
@@ -3117,6 +3117,7 @@ WalSndKill(int code, Datum arg)
 	/* Mark WalSnd struct as no longer being in use. */
 	walsnd->pid = 0;
 	SpinLockRelease(&walsnd->mutex);
+	pg_atomic_fetch_sub_u32(&WalSndCtl->active_wal_senders, 1);
 }
 
 /* XLogReaderRoutine->segment_open callback */
@@ -3698,6 +3699,15 @@ WalSndRqstFileReload(void)
 }
 
 /*
+ * Returns the number of active walsender processes
+ */
+int
+WalSndNumActive(void)
+{
+	return pg_atomic_read_u32(&WalSndCtl->active_wal_senders);
+}
+
+/*
  * Handle PROCSIG_WALSND_INIT_STOPPING signal.
  */
 void
@@ -3784,6 +3794,8 @@ WalSndShmemInit(void)
 
 			SpinLockInit(&walsnd->mutex);
 		}
+
+		pg_atomic_init_u32(&WalSndCtl->active_wal_senders, 0);
 
 		ConditionVariableInit(&WalSndCtl->wal_flush_cv);
 		ConditionVariableInit(&WalSndCtl->wal_replay_cv);

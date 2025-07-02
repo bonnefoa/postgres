@@ -49,6 +49,7 @@
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/startup.h"
+#include "postmaster/walsummarizer.h"
 #include "replication/slot.h"
 #include "replication/slotsync.h"
 #include "replication/walreceiver.h"
@@ -3370,6 +3371,26 @@ XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
 			}
 		}
 
+		/*
+		 * Once replayed, WAL segment files may be re-read in several cases:
+		 * archive_mode is set to always, summarize_wal is enabled or the
+		 * standby acts as a walsender for either logical or physical
+		 * replication. Outside of those conditions, the WAL segment files
+		 * shouldn't be re-read and we can signal the kernel to release any
+		 * cached pages. We also check if any replication slot is used: If
+		 * present, it's likely a walsender will start and will need to read
+		 * the WAL segment files, so we may as well keep the pages in cache.
+		 */
+#if defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_DONTNEED)
+		{
+			if (StandbyMode &&
+				XLogArchiveMode != ARCHIVE_MODE_ALWAYS &&
+				!summarize_wal &&
+				WalSndNumActive() == 0 &&
+				ReplicationSlotNumUsed() == 0)
+				(void) posix_fadvise(readFile, 0, 0, POSIX_FADV_DONTNEED);
+		}
+#endif
 		close(readFile);
 		readFile = -1;
 		readSource = XLOG_FROM_ANY;
