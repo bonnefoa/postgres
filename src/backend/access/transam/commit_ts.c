@@ -494,6 +494,32 @@ pg_xact_commit_timestamp_origin(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Auto-tune commit_timestamp_buffers based on shared buffers
+ */
+void
+CommitTsAutotune(void)
+{
+	char		buf[32];
+
+	if (commit_timestamp_buffers != 0)
+		return;
+
+	snprintf(buf, sizeof(buf), "%d", SimpleLruAutotuneBuffers(512, 1024));
+	SetConfigOption("commit_timestamp_buffers", buf, PGC_POSTMASTER,
+					PGC_S_DYNAMIC_DEFAULT);
+
+	/*
+	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
+	 * However, if the DBA explicitly set commit_timestamp_buffers = 0 in the
+	 * config file, then PGC_S_DYNAMIC_DEFAULT will fail to override that and
+	 * we must force the matter with PGC_S_OVERRIDE.
+	 */
+	if (commit_timestamp_buffers == 0)	/* failed to apply it? */
+		SetConfigOption("commit_timestamp_buffers", buf, PGC_POSTMASTER,
+						PGC_S_OVERRIDE);
+}
+
+/*
  * Number of shared CommitTS buffers.
  *
  * If asked to autotune, use 2MB for every 1GB of shared buffers, up to 8MB.
@@ -503,10 +529,7 @@ pg_xact_commit_timestamp_origin(PG_FUNCTION_ARGS)
 static int
 CommitTsShmemBuffers(void)
 {
-	/* auto-tune based on shared buffers */
-	if (commit_timestamp_buffers == 0)
-		return SimpleLruAutotuneBuffers(512, 1024);
-
+	Assert(commit_timestamp_buffers > 0);
 	return Min(Max(16, commit_timestamp_buffers), SLRU_MAX_ALLOWED_BUFFERS);
 }
 
@@ -528,27 +551,6 @@ void
 CommitTsShmemInit(void)
 {
 	bool		found;
-
-	/* If auto-tuning is requested, now is the time to do it */
-	if (commit_timestamp_buffers == 0)
-	{
-		char		buf[32];
-
-		snprintf(buf, sizeof(buf), "%d", CommitTsShmemBuffers());
-		SetConfigOption("commit_timestamp_buffers", buf, PGC_POSTMASTER,
-						PGC_S_DYNAMIC_DEFAULT);
-
-		/*
-		 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
-		 * However, if the DBA explicitly set commit_timestamp_buffers = 0 in
-		 * the config file, then PGC_S_DYNAMIC_DEFAULT will fail to override
-		 * that and we must force the matter with PGC_S_OVERRIDE.
-		 */
-		if (commit_timestamp_buffers == 0)	/* failed to apply it? */
-			SetConfigOption("commit_timestamp_buffers", buf, PGC_POSTMASTER,
-							PGC_S_OVERRIDE);
-	}
-	Assert(commit_timestamp_buffers != 0);
 
 	CommitTsCtl->PagePrecedes = CommitTsPagePrecedes;
 	SimpleLruInit(CommitTsCtl, "commit_timestamp", CommitTsShmemBuffers(), 0,

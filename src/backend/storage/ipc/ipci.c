@@ -374,3 +374,25 @@ InitializeShmemGUCs(void)
 	sprintf(buf, "%d", ProcGlobalSemas());
 	SetConfigOption("num_os_semaphores", buf, PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
 }
+
+/*
+ * Auto-tune shared memory configuration
+ *
+ * Some subsystems auto-tune their configurations based on the NBuffers
+ * value. This must be called before CalculateShmemSize and will change the GUC
+ * values (when there is one) with the auto-tuned value.
+ */
+void
+AutotuneShmem(void)
+{
+	Size		requested_size;
+
+	AioAutotune();
+	CLOGAutotune();
+	CommitTsAutotune();
+	SUBTRANSAutotune();
+	XLOGAutotune();
+
+	requested_size = CalculateShmemSize();
+	BufferManagerAutotune(requested_size);
+}

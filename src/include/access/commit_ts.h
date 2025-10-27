@@ -28,6 +28,7 @@ extern TransactionId GetLatestCommitTsData(TimestampTz *ts,
 										   RepOriginId *nodeid);
 
 extern Size CommitTsShmemSize(void);
+extern void CommitTsAutotune(void);
 extern void CommitTsShmemInit(void);
 extern void BootStrapCommitTs(void);
 extern void StartupCommitTs(void);

@@ -245,6 +245,7 @@ extern bool DataChecksumsEnabled(void);
 extern bool GetDefaultCharSignedness(void);
 extern XLogRecPtr GetFakeLSNForUnloggedRel(void);
 extern Size XLOGShmemSize(void);
+extern void XLOGAutotune(void);
 extern void XLOGShmemInit(void);
 extern void BootStrapXLOG(uint32 data_checksum_version);
 extern void InitializeWalConsistencyChecking(void);

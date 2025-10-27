@@ -757,6 +757,32 @@ TransactionIdGetStatus(TransactionId xid, XLogRecPtr *lsn)
 }
 
 /*
+ * Auto-tune transaction_buffers based on shared buffers
+ */
+void
+CLOGAutotune(void)
+{
+	char		buf[32];
+
+	if (transaction_buffers != 0)
+		return;
+
+	snprintf(buf, sizeof(buf), "%d", SimpleLruAutotuneBuffers(512, 1024));
+	SetConfigOption("transaction_buffers", buf, PGC_POSTMASTER,
+					PGC_S_DYNAMIC_DEFAULT);
+
+	/*
+	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
+	 * However, if the DBA explicitly set transaction_buffers = 0 in the
+	 * config file, then PGC_S_DYNAMIC_DEFAULT will fail to override that and
+	 * we must force the matter with PGC_S_OVERRIDE.
+	 */
+	if (transaction_buffers == 0)	/* failed to apply it? */
+		SetConfigOption("transaction_buffers", buf, PGC_POSTMASTER,
+						PGC_S_OVERRIDE);
+}
+
+/*
  * Number of shared CLOG buffers.
  *
  * If asked to autotune, use 2MB for every 1GB of shared buffers, up to 8MB.
@@ -766,10 +792,7 @@ TransactionIdGetStatus(TransactionId xid, XLogRecPtr *lsn)
 static int
 CLOGShmemBuffers(void)
 {
-	/* auto-tune based on shared buffers */
-	if (transaction_buffers == 0)
-		return SimpleLruAutotuneBuffers(512, 1024);
-
+	Assert(transaction_buffers > 0);
 	return Min(Max(16, transaction_buffers), CLOG_MAX_ALLOWED_BUFFERS);
 }
 
@@ -785,27 +808,6 @@ CLOGShmemSize(void)
 void
 CLOGShmemInit(void)
 {
-	/* If auto-tuning is requested, now is the time to do it */
-	if (transaction_buffers == 0)
-	{
-		char		buf[32];
-
-		snprintf(buf, sizeof(buf), "%d", CLOGShmemBuffers());
-		SetConfigOption("transaction_buffers", buf, PGC_POSTMASTER,
-						PGC_S_DYNAMIC_DEFAULT);
-
-		/*
-		 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
-		 * However, if the DBA explicitly set transaction_buffers = 0 in the
-		 * config file, then PGC_S_DYNAMIC_DEFAULT will fail to override that
-		 * and we must force the matter with PGC_S_OVERRIDE.
-		 */
-		if (transaction_buffers == 0)	/* failed to apply it? */
-			SetConfigOption("transaction_buffers", buf, PGC_POSTMASTER,
-							PGC_S_OVERRIDE);
-	}
-	Assert(transaction_buffers != 0);
-
 	XactCtl->PagePrecedes = CLOGPagePrecedes;
 	SimpleLruInit(XactCtl, "transaction", CLOGShmemBuffers(), CLOG_LSNS_PER_PAGE,
 				  "pg_xact", LWTRANCHE_XACT_BUFFER,

@@ -191,18 +191,11 @@ SubTransGetTopmostTransaction(TransactionId xid)
 
 /*
  * Number of shared SUBTRANS buffers.
- *
- * If asked to autotune, use 2MB for every 1GB of shared buffers, up to 8MB.
- * Otherwise just cap the configured amount to be between 16 and the maximum
- * allowed.
  */
 static int
 SUBTRANSShmemBuffers(void)
 {
-	/* auto-tune based on shared buffers */
-	if (subtransaction_buffers == 0)
-		return SimpleLruAutotuneBuffers(512, 1024);
-
+	Assert(subtransaction_buffers > 0);
 	return Min(Max(16, subtransaction_buffers), SLRU_MAX_ALLOWED_BUFFERS);
 }
 
@@ -215,30 +208,39 @@ SUBTRANSShmemSize(void)
 	return SimpleLruShmemSize(SUBTRANSShmemBuffers(), 0);
 }
 
+/*
+ * Auto-tune subtransaction_buffers based on shared_buffers
+ *
+ * If asked to autotune, use 2MB for every 1GB of shared buffers, up to 8MB.
+ * Otherwise just cap the configured amount to be between 16 and the maximum
+ * allowed.
+ */
+void
+SUBTRANSAutotune(void)
+{
+	char		buf[32];
+
+	if (subtransaction_buffers != 0)
+		return;
+
+	snprintf(buf, sizeof(buf), "%d", SimpleLruAutotuneBuffers(512, 1024));
+	SetConfigOption("subtransaction_buffers", buf, PGC_POSTMASTER,
+					PGC_S_DYNAMIC_DEFAULT);
+
+	/*
+	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
+	 * However, if the DBA explicitly set subtransaction_buffers = 0 in the
+	 * config file, then PGC_S_DYNAMIC_DEFAULT will fail to override that and
+	 * we must force the matter with PGC_S_OVERRIDE.
+	 */
+	if (subtransaction_buffers == 0)	/* failed to apply it? */
+		SetConfigOption("subtransaction_buffers", buf, PGC_POSTMASTER,
+						PGC_S_OVERRIDE);
+}
+
 void
 SUBTRANSShmemInit(void)
 {
-	/* If auto-tuning is requested, now is the time to do it */
-	if (subtransaction_buffers == 0)
-	{
-		char		buf[32];
-
-		snprintf(buf, sizeof(buf), "%d", SUBTRANSShmemBuffers());
-		SetConfigOption("subtransaction_buffers", buf, PGC_POSTMASTER,
-						PGC_S_DYNAMIC_DEFAULT);
-
-		/*
-		 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
-		 * However, if the DBA explicitly set subtransaction_buffers = 0 in
-		 * the config file, then PGC_S_DYNAMIC_DEFAULT will fail to override
-		 * that and we must force the matter with PGC_S_OVERRIDE.
-		 */
-		if (subtransaction_buffers == 0)	/* failed to apply it? */
-			SetConfigOption("subtransaction_buffers", buf, PGC_POSTMASTER,
-							PGC_S_OVERRIDE);
-	}
-	Assert(subtransaction_buffers != 0);
-
 	SubTransCtl->PagePrecedes = SubTransPagePrecedes;
 	SimpleLruInit(SubTransCtl, "subtransaction", SUBTRANSShmemBuffers(), 0,
 				  "pg_subtrans", LWTRANCHE_SUBTRANS_BUFFER,

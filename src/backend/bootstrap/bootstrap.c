@@ -337,6 +337,11 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 
 	InitializeFastPathLocks();
 
+	/*
+	 * Give the chance for subsystems to auto-tune their values.
+	 */
+	AutotuneShmem();
+
 	CreateSharedMemoryAndSemaphores();
 
 	/*

@@ -4716,7 +4716,7 @@ check_wal_buffers(int *newval, void **extra, GucSource source)
 	{
 		/*
 		 * If we haven't yet changed the boot_val default of -1, just let it
-		 * be.  We'll fix it when XLOGShmemSize is called.
+		 * be.  We'll fix it when XLOGAutotune is called.
 		 */
 		if (XLOGbuffers == -1)
 			return true;
@@ -4956,6 +4956,34 @@ GetActiveWalLevelOnStandby(void)
 }
 
 /*
+ * Auto-tune wal_buffers value
+ *
+ * If the value of wal_buffers is -1, use the preferred auto-tune value.
+ */
+void
+XLOGAutotune(void)
+{
+	char		buf[32];
+
+	if (XLOGbuffers != -1)
+		return;
+
+	snprintf(buf, sizeof(buf), "%d", XLOGChooseNumBuffers());
+	SetConfigOption("wal_buffers", buf, PGC_POSTMASTER,
+					PGC_S_DYNAMIC_DEFAULT);
+
+	/*
+	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
+	 * However, if the DBA explicitly set wal_buffers = -1 in the config file,
+	 * then PGC_S_DYNAMIC_DEFAULT will fail to override that and we must force
+	 * the matter with PGC_S_OVERRIDE.
+	 */
+	if (XLOGbuffers == -1)		/* failed to apply it? */
+		SetConfigOption("wal_buffers", buf, PGC_POSTMASTER,
+						PGC_S_OVERRIDE);
+}
+
+/*
  * Initialization of shared memory for XLOG
  */
 Size
@@ -4963,28 +4991,6 @@ XLOGShmemSize(void)
 {
 	Size		size;
 
-	/*
-	 * If the value of wal_buffers is -1, use the preferred auto-tune value.
-	 * This isn't an amazingly clean place to do this, but we must wait till
-	 * NBuffers has received its final value, and must do it before using the
-	 * value of XLOGbuffers to do anything important.
-	 *
-	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
-	 * However, if the DBA explicitly set wal_buffers = -1 in the config file,
-	 * then PGC_S_DYNAMIC_DEFAULT will fail to override that and we must force
-	 * the matter with PGC_S_OVERRIDE.
-	 */
-	if (XLOGbuffers == -1)
-	{
-		char		buf[32];
-
-		snprintf(buf, sizeof(buf), "%d", XLOGChooseNumBuffers());
-		SetConfigOption("wal_buffers", buf, PGC_POSTMASTER,
-						PGC_S_DYNAMIC_DEFAULT);
-		if (XLOGbuffers == -1)	/* failed to apply it? */
-			SetConfigOption("wal_buffers", buf, PGC_POSTMASTER,
-							PGC_S_OVERRIDE);
-	}
 	Assert(XLOGbuffers > 0);
 
 	/* XLogCtl */

@@ -109,10 +109,17 @@ AioChooseMaxConcurrency(void)
 	return Min(max_proportional_pins, 64);
 }
 
-Size
-AioShmemSize(void)
+void
+AioAutotune(void)
 {
-	Size		sz = 0;
+	char		buf[32];
+
+	if (io_max_concurrency != -1)
+		return;
+
+	snprintf(buf, sizeof(buf), "%d", AioChooseMaxConcurrency());
+	SetConfigOption("io_max_concurrency", buf, PGC_POSTMASTER,
+					PGC_S_DYNAMIC_DEFAULT);
 
 	/*
 	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
@@ -120,17 +127,15 @@ AioShmemSize(void)
 	 * config file, then PGC_S_DYNAMIC_DEFAULT will fail to override that and
 	 * we must force the matter with PGC_S_OVERRIDE.
 	 */
-	if (io_max_concurrency == -1)
-	{
-		char		buf[32];
-
-		snprintf(buf, sizeof(buf), "%d", AioChooseMaxConcurrency());
+	if (io_max_concurrency == -1)	/* failed to apply it? */
 		SetConfigOption("io_max_concurrency", buf, PGC_POSTMASTER,
-						PGC_S_DYNAMIC_DEFAULT);
-		if (io_max_concurrency == -1)	/* failed to apply it? */
-			SetConfigOption("io_max_concurrency", buf, PGC_POSTMASTER,
-							PGC_S_OVERRIDE);
-	}
+						PGC_S_OVERRIDE);
+}
+
+Size
+AioShmemSize(void)
+{
+	Size		sz = 0;
 
 	sz = add_size(sz, AioCtlShmemSize());
 	sz = add_size(sz, AioBackendShmemSize());

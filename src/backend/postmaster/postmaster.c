@@ -964,6 +964,11 @@ PostmasterMain(int argc, char *argv[])
 	process_shmem_requests();
 
 	/*
+	 * Give the chance for subsystems to auto-tune their values.
+	 */
+	AutotuneShmem();
+
+	/*
 	 * Now that loadable modules have had their chance to request additional
 	 * shared memory, determine the value of any runtime-computed GUCs that
 	 * depend on the amount of shared memory required.
