@@ -22,6 +22,9 @@ extern void pq_beginmessage_reuse(StringInfo buf, char msgtype);
 extern void pq_endmessage(StringInfo buf);
 extern void pq_endmessage_reuse(StringInfo buf);
 
+extern void pq_begin_compress(void);
+extern void pq_end_compress(StringInfo buf);
+
 extern void pq_sendbytes(StringInfo buf, const void *data, int datalen);
 extern void pq_sendcountedtext(StringInfo buf, const char *str, int slen);
 extern void pq_sendtext(StringInfo buf, const char *str, int slen);

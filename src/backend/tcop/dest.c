@@ -28,6 +28,7 @@
 
 #include "postgres.h"
 
+#include "access/printcompressed.h"
 #include "access/printsimple.h"
 #include "access/printtup.h"
 #include "access/xact.h"
@@ -87,6 +88,11 @@ static const DestReceiver spi_printtupDR = {
 	DestSPI
 };
 
+static const DestReceiver printcompressedDR = {
+	printcompressed, printcompressed_startup, printcompressed_cleanup, printcompressed_shutdown,
+	DestRemoteCompressed
+};
+
 /*
  * Globally available receiver for DestNone.
  *
@@ -132,6 +138,9 @@ CreateDestReceiver(CommandDest dest)
 		case DestDebug:
 			return unconstify(DestReceiver *, &debugtupDR);
 
+		case DestRemoteCompressed:
+			return unconstify(DestReceiver *, &printcompressedDR);
+
 		case DestSPI:
 			return unconstify(DestReceiver *, &spi_printtupDR);
 
@@ -174,6 +183,7 @@ EndCommand(const QueryCompletion *qc, CommandDest dest, bool force_undecorated_o
 	switch (dest)
 	{
 		case DestRemote:
+		case DestRemoteCompressed:
 		case DestRemoteExecute:
 		case DestRemoteSimple:
 
@@ -220,6 +230,7 @@ NullCommand(CommandDest dest)
 	switch (dest)
 	{
 		case DestRemote:
+		case DestRemoteCompressed:
 		case DestRemoteExecute:
 		case DestRemoteSimple:
 
@@ -258,6 +269,7 @@ ReadyForQuery(CommandDest dest)
 	switch (dest)
 	{
 		case DestRemote:
+		case DestRemoteCompressed:
 		case DestRemoteExecute:
 		case DestRemoteSimple:
 			{

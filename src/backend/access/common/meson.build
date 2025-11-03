@@ -8,6 +8,7 @@ backend_sources += files(
   'indextuple.c',
   'printsimple.c',
   'printtup.c',
+  'printtup_compression.c',
   'relation.c',
   'reloptions.c',
   'scankey.c',

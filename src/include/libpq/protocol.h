@@ -41,6 +41,7 @@
 #define PqMsg_NotificationResponse	'A'
 #define PqMsg_CommandComplete		'C'
 #define PqMsg_DataRow				'D'
+#define PqMsg_DataRowCompressed		'z'
 #define PqMsg_ErrorResponse			'E'
 #define PqMsg_CopyInResponse		'G'
 #define PqMsg_CopyOutResponse		'H'

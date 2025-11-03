@@ -24,11 +24,9 @@
 #include "utils/memutils.h"
 #include "varatt.h"
 
-
 static void printtup_startup(DestReceiver *self, int operation,
 							 TupleDesc typeinfo);
 static bool printtup(TupleTableSlot *slot, DestReceiver *self);
-static bool printtup_compressed(TupleTableSlot *slot, DestReceiver *self);
 static void printtup_shutdown(DestReceiver *self);
 static void printtup_destroy(DestReceiver *self);
 
@@ -107,8 +105,6 @@ SetRemoteDestReceiverParams(DestReceiver *self, Portal portal)
 
 	Assert(myState->pub.mydest == DestRemote ||
 		   myState->pub.mydest == DestRemoteExecute);
-  if (compress_tuples)
-    myState->pub.receiveSlot = printtup_compressed;
 
 	myState->portal = portal;
 }
@@ -387,96 +383,6 @@ printtup(TupleTableSlot *slot, DestReceiver *self)
 	return true;
 }
 
-
-typedef struct ZstdCompressorState {
-  /* This is a normal file to which we read/write compressed data */
-  FILE *fp;
-
-  ZSTD_CStream *cstream;
-  ZSTD_DStream *dstream;
-  ZSTD_outBuffer output;
-  ZSTD_inBuffer input;
-
-  /* pointer to a static string like from strerror(), for Zstd_write() */
-  const char *zstderror;
-} ZstdCompressorState;
-
-/* ----------------
- *		printtup_compressed --- send a tuple to the client
- * ----------------
- */
-static bool printtup_compressed(TupleTableSlot *slot, DestReceiver *self) {
-  TupleDesc typeinfo = slot->tts_tupleDescriptor;
-  DR_printtup *myState = (DR_printtup *)self;
-  MemoryContext oldcontext;
-  StringInfo buf = &myState->buf;
-  int natts = typeinfo->natts;
-  int i;
-
-  /* Set or update my derived attribute info, if needed */
-  if (myState->attrinfo != typeinfo || myState->nattrs != natts)
-    printtup_prepare_info(myState, typeinfo, natts);
-
-  /* Make sure the tuple is fully deconstructed */
-  slot_getallattrs(slot);
-
-  /* Switch into per-row context so we can recover memory below */
-  oldcontext = MemoryContextSwitchTo(myState->tmpcontext);
-
-  /*
-   * Prepare a DataRow message (note buffer is in per-query context)
-   */
-  pq_beginmessage_reuse(buf, PqMsg_DataRow);
-
-  pq_sendint16(buf, natts);
-
-  /*
-   * send the attributes of this tuple
-   */
-  for (i = 0; i < natts; ++i) {
-    PrinttupAttrInfo *thisState = myState->myinfo + i;
-    Datum attr = slot->tts_values[i];
-
-    if (slot->tts_isnull[i]) {
-      pq_sendint32(buf, -1);
-      continue;
-    }
-
-    /*
-     * Here we catch undefined bytes in datums that are returned to the
-     * client without hitting disk; see comments at the related check in
-     * PageAddItem().  This test is most useful for uncompressed,
-     * non-external datums, but we're quite likely to see such here when
-     * testing new C functions.
-     */
-    if (thisState->typisvarlena)
-      VALGRIND_CHECK_MEM_IS_DEFINED(DatumGetPointer(attr),
-                                    VARSIZE_ANY(DatumGetPointer(attr)));
-
-    if (thisState->format == 0) {
-      /* Text output */
-      char *outputstr;
-
-      outputstr = OutputFunctionCall(&thisState->finfo, attr);
-      pq_sendcountedtext(buf, outputstr, strlen(outputstr));
-    } else {
-      /* Binary output */
-      bytea *outputbytes;
-
-      outputbytes = SendFunctionCall(&thisState->finfo, attr);
-      pq_sendint32(buf, VARSIZE(outputbytes) - VARHDRSZ);
-      pq_sendbytes(buf, VARDATA(outputbytes), VARSIZE(outputbytes) - VARHDRSZ);
-    }
-  }
-
-  pq_endmessage_reuse(buf);
-
-  /* Return to caller's context, and flush row's temporary memory */
-  MemoryContextSwitchTo(oldcontext);
-  MemoryContextReset(myState->tmpcontext);
-
-  return true;
-}
 
 /* ----------------
  *		printtup_shutdown

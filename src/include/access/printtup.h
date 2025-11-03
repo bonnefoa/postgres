@@ -32,4 +32,6 @@ extern void spi_dest_startup(DestReceiver *self, int operation,
 							 TupleDesc typeinfo);
 extern bool spi_printtup(TupleTableSlot *slot, DestReceiver *self);
 
-#endif							/* PRINTTUP_H */
+extern PGDLLIMPORT bool compress_tuples;
+
+#endif /* PRINTTUP_H */

@@ -79,6 +79,12 @@
 #include "port/pg_bswap.h"
 #include "varatt.h"
 
+#ifdef USE_ZSTD
+#include <zstd.h>
+static ZSTD_CStream  *cctx;
+#endif
+
+
 
 /* --------------------------------
  *		pq_beginmessage		- initialize for sending a message
@@ -117,6 +123,7 @@ pq_beginmessage_reuse(StringInfo buf, char msgtype)
 	 */
 	buf->cursor = msgtype;
 }
+
 
 /* --------------------------------
  *		pq_sendbytes	- append raw data to a StringInfo buffer
@@ -315,6 +322,30 @@ pq_endmessage_reuse(StringInfo buf)
 {
 	/* msgtype was saved in cursor field */
 	(void) pq_putmessage(buf->cursor, buf->data, buf->len);
+}
+
+void
+pq_begin_compress(void)
+{
+	size_t ret;
+	cctx = ZSTD_createCStream();
+	if (!cctx)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("could not create zstd compression context")));
+
+	ret = ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel,
+								 ZSTD_CLEVEL_DEFAULT);
+	if (ZSTD_isError(ret))
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("could not set zstd compression level to %d: %s",
+				 ZSTD_CLEVEL_DEFAULT, ZSTD_getErrorName(ret))));
+}
+
+void
+pq_end_compress(StringInfo buf)
+{
 }
 
 
