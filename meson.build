@@ -374,8 +374,8 @@ if flex.found()
 endif
 flex_wrapper = files('src/tools/pgflex')
 flex_cmd = [python, flex_wrapper,
-  '--builddir', '@BUILD_ROOT@',
-  '--srcdir', '@SOURCE_ROOT@',
+  '--builddir', meson.project_build_root(),
+  '--srcdir', meson.project_source_root(),
   '--privatedir', '@PRIVATE_DIR@',
   '--flex', flex, '--perl', perl,
   '-i', '@INPUT@', '-o', '@OUTPUT0@',
@@ -3143,7 +3143,7 @@ catalog_pm = files('src/backend/catalog/Catalog.pm')
 perfect_hash_pm = files('src/tools/PerfectHash.pm')
 gen_kwlist_deps = [perfect_hash_pm]
 gen_kwlist_cmd = [
-  perl, '-I', '@SOURCE_ROOT@/src/tools',
+  perl, '-I', meson.project_source_root() / 'src/tools',
   files('src/tools/gen_keywordlist.pl'),
   '--output', '@OUTDIR@', '@INPUT@']
 
@@ -3858,7 +3858,7 @@ pg_git_revision = get_option('PG_GIT_REVISION')
 
 tar_gz = custom_target('tar.gz',
   build_always_stale: true,
-  command: [git, '-C', '@SOURCE_ROOT@',
+  command: [git, '-C', meson.project_source_root(),
             '-c', 'core.autocrlf=false',
             'archive',
             '--format', 'tar.gz',
@@ -3872,7 +3872,7 @@ tar_gz = custom_target('tar.gz',
 if bzip2.found()
   tar_bz2 = custom_target('tar.bz2',
     build_always_stale: true,
-    command: [git, '-C', '@SOURCE_ROOT@',
+    command: [git, '-C', meson.project_source_root(),
               '-c', 'core.autocrlf=false',
               '-c', 'tar.tar.bz2.command="@0@" -c'.format(bzip2.full_path()),
               'archive',

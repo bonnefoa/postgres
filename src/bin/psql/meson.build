@@ -39,7 +39,7 @@ sql_help = custom_target('psql_help',
   depfile: 'sql_help.dep',
   command: [
     perl, files('create_help.pl'),
-    '--docdir', '@SOURCE_ROOT@/doc/src/sgml/ref',
+    '--docdir', meson.project_source_root() / 'doc/src/sgml/ref',
     '--depfile', '@DEPFILE@',
     '--outdir', '@OUTDIR@',
     '--basename', 'sql_help',

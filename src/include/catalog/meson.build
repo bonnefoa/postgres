@@ -136,7 +136,7 @@ generated_catalog_headers = custom_target('generated_catalog_headers',
   command: [
     perl,
     files('../../backend/catalog/genbki.pl'),
-    '--include-path=@SOURCE_ROOT@/src/include',
+    '--include-path', meson.project_source_root() / 'src/include',
     '--set-version=' + pg_version_major.to_string(),
     '--output=@OUTDIR@', '@INPUT@'
   ],
