@@ -22,7 +22,6 @@ backend_sources += files(
   'xloginsert.c',
   'xlogprefetcher.c',
   'xlogrecovery.c',
-  'xlogstats.c',
   'xlogutils.c',
   'xlogwait.c',
 )
@@ -31,5 +30,9 @@ backend_sources += files(
 xlogreader_sources = files(
   'xlogreader.c',
 )
+xlogstats_sources = files(
+  'xlogstats.c',
+)
 
+backend_sources += xlogstats_sources
 backend_sources += xlogreader_sources
