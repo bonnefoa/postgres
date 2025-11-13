@@ -64,11 +64,12 @@ bitcode_cflags = ['-fno-strict-aliasing', '-fwrapv']
 bitcode_cflags += get_option('c_args')
 bitcode_cflags += cppflags
 
-# XXX: Worth improving on the logic to find directories here
-bitcode_cflags += '-I@BUILD_ROOT@/src/include'
-bitcode_cflags += '-I@BUILD_ROOT@/src/backend/utils/misc'
-bitcode_cflags += '-I@SOURCE_ROOT@/src/include'
-
+bitcode_cflags += ['-I' + meson.project_source_root() / 'src/backend/utils/misc']
+foreach inc_d : postgres_inc_d
+  bitcode_cflags += ['-I' + meson.project_source_root() / inc_d]
+  # For generated headers like pg_config.h
+  bitcode_cflags += ['-I' + meson.project_build_root() / inc_d]
+endforeach
 
 # Note this is intentionally not installed to bitcodedir, as it's not for
 # inlining
