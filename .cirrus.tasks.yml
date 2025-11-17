@@ -563,7 +563,7 @@ task:
           meson setup \
             ${MESON_COMMON_PG_CONFIG_ARGS} \
             --buildtype=debug \
-            ${LINUX_MESON_FEATURES} -Dllvm=enabled \
+            ${LINUX_MESON_FEATURES} -Dllvm=enabled -Dnls=enabled \
             build
         EOF
 
