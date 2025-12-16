@@ -911,7 +911,8 @@ smgrtruncate(SMgrRelation reln, ForkNumber *forknum, int nforks,
 		 * these ones too at the next command boundary. But ensure they aren't
 		 * outright wrong until then.
 		 */
-		reln->smgr_cached_nblocks[forknum[i]] = nblocks[i];
+
+		reln->smgr_cached_nblocks[forknum[i]] = nblocks[i] > old_nblocks[i] ? old_nblocks[i] : nblocks[i];
 	}
 }
 
