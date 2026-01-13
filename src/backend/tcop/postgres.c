@@ -5229,11 +5229,15 @@ enable_statement_timeout(void)
 }
 
 /*
- * Disable statement timeout, if active.
+ * Disable statement timeout, if active. If not active, the I've-been-fired
+ * indicator is reset.
  */
 static void
 disable_statement_timeout(void)
 {
 	if (get_timeout_active(STATEMENT_TIMEOUT))
 		disable_timeout(STATEMENT_TIMEOUT, false);
+	else
+		/* The timeout may have been fired, reset the timeout indicator */
+		get_timeout_indicator(STATEMENT_TIMEOUT, true);
 }
