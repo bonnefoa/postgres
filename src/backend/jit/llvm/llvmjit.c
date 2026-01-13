@@ -674,6 +674,10 @@ llvm_optimize_module(LLVMJitContext *context, LLVMModuleRef module)
 
 	if (context->base.flags & PGJIT_OPT3)
 		passes = "default<O3>";
+	else if (context->base.flags & PGJIT_INLINE
+			 && !(context->base.flags & PGJIT_OPT3))
+	  /* if doing inlining, but no expensive optimization, add inlining pass */
+		passes = "default<O0>,mem2reg,inline";
 	else
 		passes = "default<O0>,mem2reg";
 
@@ -1136,6 +1140,7 @@ llvm_resolve_symbols(LLVMOrcDefinitionGeneratorRef GeneratorObj, void *Ctx,
 
 		LLVMOrcRetainSymbolStringPoolEntry(LookupSet[i].Name);
 		symbols[i].Name = LookupSet[i].Name;
+
 		symbols[i].Sym.Address = llvm_resolve_symbol(name, NULL);
 		symbols[i].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
 	}
