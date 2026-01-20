@@ -163,7 +163,7 @@ BufferManagerShmemSize(void)
 	size = add_size(size, mul_size(NBuffers, BLCKSZ));
 
 	/* size of stuff controlled by freelist.c */
-	size = add_size(size, StrategyShmemSize());
+	size = add_size(size, StrategyShmemSize(NBuffers));
 
 	/* size of I/O condition variables */
 	size = add_size(size, mul_size(NBuffers,

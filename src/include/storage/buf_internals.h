@@ -571,7 +571,7 @@ extern bool StrategyRejectBuffer(BufferAccessStrategy strategy,
 extern int	StrategySyncStart(uint32 *complete_passes, uint32 *num_buf_alloc);
 extern void StrategyNotifyBgWriter(int bgwprocno);
 
-extern Size StrategyShmemSize(void);
+extern Size StrategyShmemSize(int num_buffers);
 extern void StrategyInitialize(bool init);
 
 /* buf_table.c */

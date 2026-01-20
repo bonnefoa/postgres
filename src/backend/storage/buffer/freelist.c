@@ -377,12 +377,12 @@ StrategyNotifyBgWriter(int bgwprocno)
  * is also determined here.
  */
 Size
-StrategyShmemSize(void)
+StrategyShmemSize(int num_buffers)
 {
 	Size		size = 0;
 
 	/* size of lookup hash table ... see comment in StrategyInitialize */
-	size = add_size(size, BufTableShmemSize(NBuffers + NUM_BUFFER_PARTITIONS));
+	size = add_size(size, BufTableShmemSize(num_buffers + NUM_BUFFER_PARTITIONS));
 
 	/* size of the shared replacement strategy control block */
 	size = add_size(size, MAXALIGN(sizeof(BufferStrategyControl)));
