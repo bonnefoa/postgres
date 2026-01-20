@@ -1758,6 +1758,24 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-shared-buffers-autotune-target" xreflabel="shared_buffers_autotune_target">
+      <term><varname>shared_buffers_autotune_target</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>shared_buffers_autotune_target</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the amount of shared memory to target. If the requested
+        shared memory is inferior to the shared memory target,
+        <varname>shared_buffers</varname> will be increased to absorb the
+        extra space.
+
+        This parameter can only be set at server start.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-huge-pages" xreflabel="huge_pages">
       <term><varname>huge_pages</varname> (<type>enum</type>)
       <indexterm>

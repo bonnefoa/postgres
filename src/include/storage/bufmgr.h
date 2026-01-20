@@ -185,6 +185,7 @@ extern PGDLLIMPORT const PgAioHandleCallbacks aio_local_buffer_readv_cb;
 
 /* in buf_init.c */
 extern PGDLLIMPORT char *BufferBlocks;
+extern PGDLLIMPORT int NBuffersTarget;
 
 /* in localbuf.c */
 extern PGDLLIMPORT int NLocBuffer;
@@ -368,6 +369,7 @@ extern void MarkDirtyAllUnpinnedBuffers(int32 *buffers_dirtied,
 /* in buf_init.c */
 extern void BufferManagerShmemInit(void);
 extern Size BufferManagerShmemSize(void);
+extern void BufferManagerAutotune(Size requested_size);
 
 /* in localbuf.c */
 extern void AtProcExit_LocalBuffers(void);

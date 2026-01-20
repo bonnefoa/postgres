@@ -2609,6 +2609,15 @@
   max => 'INT_MAX / 2',
 },
 
+{ name => 'shared_buffers_autotune_target', type => 'int', context => 'PGC_POSTMASTER', group => 'RESOURCES_MEM',
+  short_desc => 'Sets the number of shared memory buffers to target.',
+  flags => 'GUC_UNIT_BLOCKS',
+  variable => 'NBuffersTarget',
+  boot_val => '0',
+  min => '0',
+  max => 'INT_MAX / 2',
+},
+
 { name => 'shared_memory_size', type => 'int', context => 'PGC_INTERNAL', group => 'PRESET_OPTIONS',
   short_desc => 'Shows the size of the server\'s main shared memory area (rounded up to the nearest MB).',
   flags => 'GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_UNIT_MB | GUC_RUNTIME_COMPUTED',

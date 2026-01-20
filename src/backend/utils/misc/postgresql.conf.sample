@@ -131,6 +131,7 @@
 
 #shared_buffers = 128MB                 # min 128kB
                                         # (change requires restart)
+#shared_buffers_autotune_target = 0     # (change requires restart)
 #huge_pages = try                       # on, off, or try
                                         # (change requires restart)
 #huge_page_size = 0                     # zero for system default

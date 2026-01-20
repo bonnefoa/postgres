@@ -14,6 +14,7 @@
  */
 #include "postgres.h"
 
+#include "utils/guc.h"
 #include "storage/aio.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
@@ -21,6 +22,7 @@
 
 BufferDescPadded *BufferDescriptors;
 char	   *BufferBlocks;
+int			NBuffersTarget = 0;
 ConditionVariableMinimallyPadded *BufferIOCVArray;
 WritebackContext BackendWritebackContext;
 CkptSortItem *CkptBufferIds;
@@ -140,6 +142,48 @@ BufferManagerShmemInit(void)
 	/* Initialize per-backend file flush context */
 	WritebackContextInit(&BackendWritebackContext,
 						 &backend_flush_after);
+}
+
+/*
+ * BufferManagerAutotune
+ *
+ * auto-tune shared_buffers to use memory up to NBuffersTarget
+ */
+void
+BufferManagerAutotune(Size requested_size)
+{
+	char		buf[32];
+	Size		target_shared_memory;
+	Size		leftover_memory;
+	Size		size_per_buffer;
+	Size		additional_freelist_memory;
+	int			candidate_nbuffers;
+
+	target_shared_memory = mul_size(NBuffersTarget, BLCKSZ);
+	if (target_shared_memory <= requested_size)
+		/* target below requested size, nothing to do */
+		return;
+
+	leftover_memory = target_shared_memory - requested_size;
+	size_per_buffer = sizeof(BufferDescPadded) +
+		sizeof(ConditionVariableMinimallyPadded) +
+		sizeof(CkptSortItem) + BLCKSZ;
+	candidate_nbuffers = add_size(NBuffers, leftover_memory / size_per_buffer);
+
+	/*
+	 * With the additional shared_buffers, the shared memory necessary for
+	 * freelist-related structures will increase. We need to estimate this
+	 * additional memory, and reduce the auto-tuned shared_buffers to fit.
+	 */
+	additional_freelist_memory = StrategyShmemSize(candidate_nbuffers) - StrategyShmemSize(NBuffers);
+	candidate_nbuffers -= additional_freelist_memory / size_per_buffer + 1;
+
+	if (candidate_nbuffers <= NBuffers)
+		return;
+
+	snprintf(buf, sizeof(buf), "%d", candidate_nbuffers);
+	SetConfigOption("shared_buffers", buf, PGC_POSTMASTER,
+					PGC_S_OVERRIDE);
 }
 
 /*

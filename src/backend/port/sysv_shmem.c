@@ -465,11 +465,11 @@ PGSharedMemoryAttach(IpcMemoryId shmId,
  * size to avoid trouble.
  *
  * Doing the round-up ourselves also lets us make use of the extra memory,
- * rather than just wasting it.  Currently, we just increase the available
- * space recorded in the shmem header, which will make the extra usable for
- * purposes such as additional locktable entries.  Someday, for very large
- * hugepage sizes, we might want to think about more invasive strategies,
- * such as increasing shared_buffers to absorb the extra space.
+ * rather than just wasting it.  We increase the available space recorded in
+ * the shmem header, which will make the extra usable for purposes such as
+ * additional locktable entries.  If buffer autotune is enabled,
+ * shared_buffers will be automatically increased to use available extra
+ * space.
  *
  * Returns the (real, assumed or config provided) page size into
  * *hugepagesize, and the hugepage-related mmap flags to use into
