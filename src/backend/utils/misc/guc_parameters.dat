@@ -379,6 +379,15 @@
   max => 'WRITEBACK_MAX_PENDING_FLUSHES',
 },
 
+{ name => 'checkpoint_request_size', type => 'int', context => 'PGC_SIGHUP', group => 'WAL_CHECKPOINTS',
+  short_desc => 'Number of requests the checkpointer request queue can hold.',
+  long_desc => '0 means use the same value as "shared_buffers".',
+  variable => 'CheckPointRequestSize',
+  boot_val => '0',
+  min => '0',
+  max => 'MAX_CHECKPOINT_REQUESTS',
+},
+
 { name => 'checkpoint_timeout', type => 'int', context => 'PGC_SIGHUP', group => 'WAL_CHECKPOINTS',
   short_desc => 'Sets the maximum time between automatic WAL checkpoints.',
   flags => 'GUC_UNIT_S',

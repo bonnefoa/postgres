@@ -21,11 +21,14 @@
 #include "storage/smgr.h"
 #include "storage/sync.h"
 
+/* Max number of requests the checkpointer request queue can hold */
+#define MAX_CHECKPOINT_REQUESTS 10000000
 
 /* GUC options */
 extern PGDLLIMPORT int BgWriterDelay;
 extern PGDLLIMPORT int CheckPointTimeout;
 extern PGDLLIMPORT int CheckPointWarning;
+extern PGDLLIMPORT int CheckPointRequestSize;
 extern PGDLLIMPORT double CheckPointCompletionTarget;
 
 pg_noreturn extern void BackgroundWriterMain(const void *startup_data, size_t startup_data_len);
@@ -40,6 +43,7 @@ extern bool ForwardSyncRequest(const FileTag *ftag, SyncRequestType type);
 extern void AbsorbSyncRequests(void);
 
 extern Size CheckpointerShmemSize(void);
+extern void CheckpointerAutotune(void);
 extern void CheckpointerShmemInit(void);
 
 extern bool FirstCallSinceLastCheckpoint(void);

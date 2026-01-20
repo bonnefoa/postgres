@@ -388,6 +388,7 @@ AutotuneShmem(void)
 	Size		requested_size;
 
 	AioAutotune();
+	CheckpointerAutotune();
 	CLOGAutotune();
 	CommitTsAutotune();
 	SUBTRANSAutotune();

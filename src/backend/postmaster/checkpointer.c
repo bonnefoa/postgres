@@ -148,14 +148,12 @@ static CheckpointerShmemStruct *CheckpointerShmem;
 /* Maximum number of checkpointer requests to process in one batch */
 #define CKPT_REQ_BATCH_SIZE 10000
 
-/* Max number of requests the checkpointer request queue can hold */
-#define MAX_CHECKPOINT_REQUESTS 10000000
-
 /*
  * GUC parameters
  */
 int			CheckPointTimeout = 300;
 int			CheckPointWarning = 30;
+int			CheckPointRequestSize = 0;
 double		CheckPointCompletionTarget = 0.9;
 
 /*
@@ -958,17 +956,44 @@ CheckpointerShmemSize(void)
 {
 	Size		size;
 
+	Assert(CheckPointRequestSize > 0);
+
+	size = offsetof(CheckpointerShmemStruct, requests);
+	size = add_size(size, mul_size(CheckPointRequestSize,
+								   sizeof(CheckpointerRequest)));
+	return size;
+}
+
+/*
+ * Auto-tune checkpoint_request_size based on shared_buffers
+ */
+void
+CheckpointerAutotune(void)
+{
+	char		buf[32];
+
+	if (CheckPointRequestSize != 0)
+		return;
+
 	/*
 	 * The size of the requests[] array is arbitrarily set equal to NBuffers.
 	 * But there is a cap of MAX_CHECKPOINT_REQUESTS to prevent accumulating
 	 * too many checkpoint requests in the ring buffer.
 	 */
-	size = offsetof(CheckpointerShmemStruct, requests);
-	size = add_size(size, mul_size(Min(NBuffers,
-									   MAX_CHECKPOINT_REQUESTS),
-								   sizeof(CheckpointerRequest)));
+	snprintf(buf, sizeof(buf), "%d", Min(NBuffers,
+									   MAX_CHECKPOINT_REQUESTS));
+	SetConfigOption("checkpoint_request_size", buf, PGC_POSTMASTER,
+					PGC_S_DYNAMIC_DEFAULT);
 
-	return size;
+	/*
+	 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
+	 * However, if the DBA explicitly set checkpoint_request_size = 0 in the config file,
+	 * then PGC_S_DYNAMIC_DEFAULT will fail to override that and we must force
+	 * the matter with PGC_S_OVERRIDE.
+	 */
+	if (CheckPointRequestSize == 0)	/* failed to apply it? */
+		SetConfigOption("checkpoint_request_size", buf, PGC_POSTMASTER,
+						PGC_S_OVERRIDE);
 }
 
 /*
@@ -995,7 +1020,7 @@ CheckpointerShmemInit(void)
 		 */
 		MemSet(CheckpointerShmem, 0, size);
 		SpinLockInit(&CheckpointerShmem->ckpt_lck);
-		CheckpointerShmem->max_requests = Min(NBuffers, MAX_CHECKPOINT_REQUESTS);
+		CheckpointerShmem->max_requests = CheckPointRequestSize;
 		CheckpointerShmem->head = CheckpointerShmem->tail = 0;
 		ConditionVariableInit(&CheckpointerShmem->start_cv);
 		ConditionVariableInit(&CheckpointerShmem->done_cv);
