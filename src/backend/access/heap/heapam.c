@@ -6646,7 +6646,7 @@ heap_inplace_update_and_unlock(Relation relation,
 	/* XLOG stuff */
 	if (RelationNeedsWAL(relation))
 	{
-		xl_heap_inplace xlrec;
+		xl_heap_inplace xlrec = {0};
 		PGAlignedBlock copied_buffer;
 		char	   *origdata = (char *) BufferGetBlock(buffer);
 		Page		page = BufferGetPage(buffer);

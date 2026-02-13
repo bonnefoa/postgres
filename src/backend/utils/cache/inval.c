@@ -331,8 +331,8 @@ AddInvalidationMessage(InvalidationMsgsGroup *group, int subgroup,
 			int			reqsize = 32;	/* arbitrary */
 
 			ima->msgs = (SharedInvalidationMessage *)
-				MemoryContextAlloc(TopTransactionContext,
-								   reqsize * sizeof(SharedInvalidationMessage));
+				MemoryContextAllocZero(TopTransactionContext,
+									   reqsize * sizeof(SharedInvalidationMessage));
 			ima->maxmsgs = reqsize;
 			Assert(nextindex == 0);
 		}
@@ -1046,8 +1046,8 @@ xactGetCommittedInvalidationMessages(SharedInvalidationMessage **msgs,
 		NumMessagesInGroup(&transInvalInfo->ii.CurrentCmdInvalidMsgs);
 
 	*msgs = msgarray = (SharedInvalidationMessage *)
-		MemoryContextAlloc(CurTransactionContext,
-						   nummsgs * sizeof(SharedInvalidationMessage));
+		MemoryContextAllocZero(CurTransactionContext,
+							   nummsgs * sizeof(SharedInvalidationMessage));
 
 	nmsgs = 0;
 	ProcessMessageSubGroupMulti(&transInvalInfo->PriorCmdInvalidMsgs,
@@ -1938,7 +1938,7 @@ CallRelSyncCallbacks(Oid relid)
 void
 LogLogicalInvalidations(void)
 {
-	xl_xact_invals xlrec;
+	xl_xact_invals xlrec = {0};
 	InvalidationMsgsGroup *group;
 	int			nmsgs;
 
@@ -1952,7 +1952,6 @@ LogLogicalInvalidations(void)
 	if (nmsgs > 0)
 	{
 		/* prepare record */
-		memset(&xlrec, 0, MinSizeOfXactInvals);
 		xlrec.nmsgs = nmsgs;
 
 		/* perform insertion */

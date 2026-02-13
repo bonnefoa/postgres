@@ -1353,7 +1353,7 @@ LogStandbySnapshot(void)
 static XLogRecPtr
 LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 {
-	xl_running_xacts xlrec;
+	xl_running_xacts xlrec = {0};
 	XLogRecPtr	recptr;
 
 	xlrec.xcnt = CurrRunningXacts->xcnt;
@@ -1471,10 +1471,9 @@ void
 LogStandbyInvalidations(int nmsgs, SharedInvalidationMessage *msgs,
 						bool relcacheInitFileInval)
 {
-	xl_invalidations xlrec;
+	xl_invalidations xlrec = {0};
 
 	/* prepare record */
-	memset(&xlrec, 0, sizeof(xlrec));
 	xlrec.dbId = MyDatabaseId;
 	xlrec.tsId = MyDatabaseTableSpace;
 	xlrec.relcacheInitFileInval = relcacheInitFileInval;
