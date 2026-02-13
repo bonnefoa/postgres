@@ -1355,6 +1355,7 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 	xl_running_xacts xlrec;
 	XLogRecPtr	recptr;
 
+	MemSet(&xlrec, 0, sizeof(xl_running_xacts));
 	xlrec.xcnt = CurrRunningXacts->xcnt;
 	xlrec.subxcnt = CurrRunningXacts->subxcnt;
 	xlrec.subxid_overflow = (CurrRunningXacts->subxid_status != SUBXIDS_IN_ARRAY);
