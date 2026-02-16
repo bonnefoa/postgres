@@ -22,7 +22,7 @@
 
 
 /* Version identifier for this pg_control format */
-#define PG_CONTROL_VERSION	1901
+#define PG_CONTROL_VERSION	1902
 
 /* Nonce key length, see below */
 #define MOCK_AUTH_NONCE_LEN		32
@@ -31,6 +31,7 @@
  * Body of CheckPoint XLOG records.  This is declared here because we keep
  * a copy of the latest one in pg_control for possible disaster recovery.
  * Changing this struct requires a PG_CONTROL_VERSION bump.
+ * The struct is ordered to avoid unnecessary padding.
  */
 typedef struct CheckPoint
 {
@@ -39,18 +40,16 @@ typedef struct CheckPoint
 	TimeLineID	ThisTimeLineID; /* current TLI */
 	TimeLineID	PrevTimeLineID; /* previous TLI, if this record begins a new
 								 * timeline (equals ThisTimeLineID otherwise) */
-	bool		fullPageWrites; /* current full_page_writes */
-	int			wal_level;		/* current wal_level */
-	bool		logicalDecodingEnabled; /* current logical decoding status */
+	pg_time_t	time;			/* time stamp of checkpoint */
 	FullTransactionId nextXid;	/* next free transaction ID */
+	int			wal_level;		/* current wal_level */
 	Oid			nextOid;		/* next free OID */
-	MultiXactId nextMulti;		/* next free MultiXactId */
 	MultiXactOffset nextMultiOffset;	/* next free MultiXact offset */
+	MultiXactId nextMulti;		/* next free MultiXactId */
 	TransactionId oldestXid;	/* cluster-wide minimum datfrozenxid */
 	Oid			oldestXidDB;	/* database with minimum datfrozenxid */
 	MultiXactId oldestMulti;	/* cluster-wide minimum datminmxid */
 	Oid			oldestMultiDB;	/* database with minimum datminmxid */
-	pg_time_t	time;			/* time stamp of checkpoint */
 	TransactionId oldestCommitTsXid;	/* oldest Xid with valid commit
 										 * timestamp */
 	TransactionId newestCommitTsXid;	/* newest Xid with valid commit
@@ -63,6 +62,8 @@ typedef struct CheckPoint
 	 * set to InvalidTransactionId.
 	 */
 	TransactionId oldestActiveXid;
+	bool		fullPageWrites; /* current full_page_writes */
+	bool		logicalDecodingEnabled; /* current logical decoding status */
 } CheckPoint;
 
 /* XLOG info values for XLOG rmgr */
