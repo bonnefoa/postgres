@@ -1786,8 +1786,19 @@ RecordTransactionAbort(bool isSubXact)
 	if (!TransactionIdIsValid(xid))
 	{
 		/* Reset XactLastRecEnd until the next transaction writes something */
-		if (!isSubXact)
+		if (!isSubXact && XactLastRecEnd != 0)
+		{
+			/*
+			 * Even if no xid was assigned, some records may have been written
+			 * in the WAL. Report the latest async LSN, so that the WAL writer
+			 * knows to flush those records. This is important when shutting
+			 * down, walsender may use XLogBackgroundFlush to trigger pending
+			 * WAL to be written out. If they're not tracked by async xact
+			 * lsn, they won't be written by XLogBackgroundFlush.
+			 */
+			XLogSetAsyncXactLSN(XactLastRecEnd);
 			XactLastRecEnd = 0;
+		}
 		return InvalidTransactionId;
 	}
 
