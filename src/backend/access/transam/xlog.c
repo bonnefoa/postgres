@@ -6710,6 +6710,8 @@ GetLastSegSwitchData(XLogRecPtr *lastSwitchLSN)
 void
 ShutdownXLOG(int code, Datum arg)
 {
+  XLogRecPtr      WriteRqstPtr;
+
 	/*
 	 * We should have an aux process resource owner to use, and we should not
 	 * be in a transaction that's installed some other resowner.
@@ -6722,6 +6724,15 @@ ShutdownXLOG(int code, Datum arg)
 	/* Don't be chatty in standalone mode */
 	ereport(IsPostmasterEnvironment ? LOG : NOTICE,
 			(errmsg("shutting down")));
+
+  /*
+   * We may have unflushed records, make sure everything is flushed before
+   * stopping the walsenders.
+   */
+  SpinLockAcquire(&XLogCtl->info_lck);
+  WriteRqstPtr = XLogCtl->LogwrtRqst.Write;
+  SpinLockRelease(&XLogCtl->info_lck);
+  XLogFlush(WriteRqstPtr);
 
 	/*
 	 * Signal walsenders to move to stopping state.
