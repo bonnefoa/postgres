@@ -9596,6 +9596,24 @@ GetXLogInsertRecPtr(void)
 }
 
 /*
+ * Like GetXLogInsertRecPtr, but if the position is at a page boundary, returns
+ * a pointer to the beginning of the page (ie. before page header), not to where
+ * the first xlog record on that page would go to.
+ */
+XLogRecPtr
+GetXLogInsertEndRecPtr(void)
+{
+	XLogCtlInsert *Insert = &XLogCtl->Insert;
+	uint64		current_bytepos;
+
+	SpinLockAcquire(&Insert->insertpos_lck);
+	current_bytepos = Insert->CurrBytePos;
+	SpinLockRelease(&Insert->insertpos_lck);
+
+	return XLogBytePosToEndRecPtr(current_bytepos);
+}
+
+/*
  * Get latest WAL write pointer
  */
 XLogRecPtr
