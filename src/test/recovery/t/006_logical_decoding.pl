@@ -275,7 +275,58 @@ is( $node_primary->safe_psql(
 	qq(Check that reset timestamp is later after resetting stats for slot '$stats_test_slot1' again.)
 );
 
-# done with the node
+SKIP:
+{
+
+	# some Windows Perls at least don't like IPC::Run's start/kill_kill regime.
+	skip "Test fails on Windows perl", 2 if $Config{osname} eq 'MSWin32';
+
+	# Test stopping the primary with an active walsender and an unflushed record
+	# which crosses the page boundary and ends at the end of the next page.
+	#
+	# First, start pg_recvlogical to have an active walsender
+	my $pg_recvlogical = IPC::Run::start(
+		[
+			'pg_recvlogical',
+			'--dbname' => $node_primary->connstr('postgres'),
+			'--slot' => 'test_slot',
+			'--file' => '-',
+			'--start'
+		]);
+
+	# Starts from a fresh WAL segment
+	$node_primary->safe_psql('postgres',
+		qq(SELECT pg_switch_wal()));
+
+	# Then, we write a logical message WAL record which finishes at the end of a
+	# WAL page, using a rollback so the WAL record isn't flushed.
+	#
+	# The size of a WAL logical message record is 55 bytes + message length
+	# Starting from a fresh WAL segment, we have:
+	#   - 8152 bytes available in the first page (long header)
+	#   - 8168 bytes available in the second page (short header)
+	# We need to write 16320 bytes of logical message WAL record, which can be done
+	# using a 16265 bytes long message.
+	$result = $node_primary->safe_psql('postgres',
+		qq[
+		BEGIN;
+		SELECT pg_logical_emit_message(false, '', repeat('a', 16265), false);
+		ROLLBACK;
+		]
+	);
+
+	# try to restart
+	$node_primary->restart;
+	$pg_recvlogical->kill_kill;
+
+	my $logfile = slurp_file($node_primary->logfile());
+	unlike(
+		$logfile,
+		qr/request to flush past end of generated WAL/,
+		"There's no flush request past end of generated WAL");
+}
+
+# stop the node
 $node_primary->stop;
 
 done_testing();
