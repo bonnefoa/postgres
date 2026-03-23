@@ -10,6 +10,7 @@ use Test::More;
 use List::Util qw(shuffle);
 
 my $tar = $ENV{TAR};
+use File::Copy;
 
 program_help_ok('pg_waldump');
 program_version_ok('pg_waldump');
@@ -245,6 +246,34 @@ command_like(
 	],
 	qr/^$/,
 	'no output with --quiet option');
+
+# Wrong WAL version. We copy an existing wal file and set the
+# page's magic value to 0000.
+{
+	# The broken WAL file is created by copying a valid WAL file and
+	# overwriting its magic number with 0000.
+	my $broken_wal_dir = PostgreSQL::Test::Utils::tempdir_short();
+	my $broken_wal = "$broken_wal_dir/$start_walfile";
+	copy($node->data_dir . '/pg_wal/' . $start_walfile, $broken_wal)
+		|| die "copying $start_walfile $!";
+
+	my $fh;
+	open($fh, '+<', $broken_wal)
+	  or BAIL_OUT("open failed: $!");
+	binmode $fh;
+	sysseek($fh, 0, 0)
+		or BAIL_OUT("sysseek failed: $!");
+	syswrite($fh, pack("S", 0))
+		or BAIL_OUT("syswrite failed: $!");
+	close($fh)
+	  or BAIL_OUT("close failed: $!");
+
+	command_fails_like(
+		[ 'pg_waldump', $broken_wal ],
+			qr/invalid magic number 0000/i,
+			'detailed error message shown for invalid WAL page magic'
+	);
+}
 
 # Test for: Display a message that we're skipping data if `from`
 # wasn't a pointer to the start of a record.
