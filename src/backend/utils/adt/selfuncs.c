@@ -7471,11 +7471,18 @@ genericcostestimate(PlannerInfo *root,
 		}
 	}
 
-	/* Estimate the fraction of main-table tuples that will be visited */
-	indexSelectivity = clauselist_selectivity(root, selectivityQuals,
-											  index->rel->relid,
-											  JOIN_INNER,
-											  NULL);
+	if (path->unique_path && index->rel->tuples >= 1.0)
+	{
+		indexSelectivity = 1.0 / index->rel->tuples;
+	}
+	else
+	{
+		/* Estimate the fraction of main-table tuples that will be visited */
+		indexSelectivity = clauselist_selectivity(root, selectivityQuals,
+												  index->rel->relid,
+												  JOIN_INNER,
+												  NULL);
+	}
 
 	/*
 	 * If caller didn't give us an estimate, estimate the number of index
@@ -7725,8 +7732,6 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	int			indexcol;
 	bool		eqQualHere;
 	bool		found_row_compare;
-	bool		found_array;
-	bool		found_is_null_op;
 	bool		have_correlation = false;
 	double		num_sa_scans;
 	double		correlation = 0.0;
@@ -7757,298 +7762,304 @@ btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	indexcol = 0;
 	eqQualHere = false;
 	found_row_compare = false;
-	found_array = false;
-	found_is_null_op = false;
 	num_sa_scans = 1;
-	foreach(lc, path->indexclauses)
+
+	/*
+	 * If path is unique, we can just assume numIndexTuples = 1 and skip
+	 * building selectivityQuals and clauselist_selectivity calculations.
+	 */
+	if (path->unique_path)
 	{
-		IndexClause *iclause = lfirst_node(IndexClause, lc);
-		ListCell   *lc2;
+		numIndexTuples = 1.0;
+	}
+	else
+	{
+		List	   *selectivityQuals;
+		Selectivity btreeSelectivity;
 
-		if (indexcol < iclause->indexcol)
+		foreach(lc, path->indexclauses)
 		{
-			double		num_sa_scans_prev_cols = num_sa_scans;
+			IndexClause *iclause = lfirst_node(IndexClause, lc);
+			ListCell   *lc2;
 
-			/*
-			 * Beginning of a new column's quals.
-			 *
-			 * Skip scans use skip arrays, which are ScalarArrayOp style
-			 * arrays that generate their elements procedurally and on demand.
-			 * Given a multi-column index on "(a, b)", and an SQL WHERE clause
-			 * "WHERE b = 42", a skip scan will effectively use an indexqual
-			 * "WHERE a = ANY('{every col a value}') AND b = 42".  (Obviously,
-			 * the array on "a" must also return "IS NULL" matches, since our
-			 * WHERE clause used no strict operator on "a").
-			 *
-			 * Here we consider how nbtree will backfill skip arrays for any
-			 * index columns that lacked an '=' qual.  This maintains our
-			 * num_sa_scans estimate, and determines if this new column (the
-			 * "iclause->indexcol" column, not the prior "indexcol" column)
-			 * can have its RestrictInfos/quals added to indexBoundQuals.
-			 *
-			 * We'll need to handle columns that have inequality quals, where
-			 * the skip array generates values from a range constrained by the
-			 * quals (not every possible value).  We've been maintaining
-			 * indexSkipQuals to help with this; it will now contain all of
-			 * the prior column's quals (that is, indexcol's quals) when they
-			 * might be used for this.
-			 */
-			if (found_row_compare)
+			if (indexcol < iclause->indexcol)
 			{
-				/*
-				 * Skip arrays can't be added after a RowCompare input qual
-				 * due to limitations in nbtree
-				 */
-				break;
-			}
-			if (eqQualHere)
-			{
-				/*
-				 * Don't need to add a skip array for an indexcol that already
-				 * has an '=' qual/equality constraint
-				 */
-				indexcol++;
-				indexSkipQuals = NIL;
-			}
-			eqQualHere = false;
-
-			while (indexcol < iclause->indexcol)
-			{
-				double		ndistinct;
-				bool		isdefault = true;
-
-				found_array = true;
+				double		num_sa_scans_prev_cols = num_sa_scans;
 
 				/*
-				 * A skipped attribute's ndistinct forms the basis of our
-				 * estimate of the total number of "array elements" used by
-				 * its skip array at runtime.  Look that up first.
+				 * Beginning of a new column's quals.
+				 *
+				 * Skip scans use skip arrays, which are ScalarArrayOp style
+				 * arrays that generate their elements procedurally and on
+				 * demand. Given a multi-column index on "(a, b)", and an SQL
+				 * WHERE clause "WHERE b = 42", a skip scan will effectively
+				 * use an indexqual "WHERE a = ANY('{every col a value}') AND
+				 * b = 42".  (Obviously, the array on "a" must also return "IS
+				 * NULL" matches, since our WHERE clause used no strict
+				 * operator on "a").
+				 *
+				 * Here we consider how nbtree will backfill skip arrays for
+				 * any index columns that lacked an '=' qual.  This maintains
+				 * our num_sa_scans estimate, and determines if this new
+				 * column (the "iclause->indexcol" column, not the prior
+				 * "indexcol" column) can have its RestrictInfos/quals added
+				 * to indexBoundQuals.
+				 *
+				 * We'll need to handle columns that have inequality quals,
+				 * where the skip array generates values from a range
+				 * constrained by the quals (not every possible value).  We've
+				 * been maintaining indexSkipQuals to help with this; it will
+				 * now contain all of the prior column's quals (that is,
+				 * indexcol's quals) when they might be used for this.
 				 */
-				examine_indexcol_variable(root, index, indexcol, &vardata);
-				ndistinct = get_variable_numdistinct(&vardata, &isdefault);
-
-				if (indexcol == 0)
+				if (found_row_compare)
 				{
 					/*
-					 * Get an estimate of the leading column's correlation in
-					 * passing (avoids rereading variable stats below)
+					 * Skip arrays can't be added after a RowCompare input
+					 * qual due to limitations in nbtree
 					 */
-					if (HeapTupleIsValid(vardata.statsTuple))
-						correlation = btcost_correlation(index, &vardata);
-					have_correlation = true;
+					break;
 				}
-
-				ReleaseVariableStats(vardata);
-
-				/*
-				 * If ndistinct is a default estimate, conservatively assume
-				 * that no skipping will happen at runtime
-				 */
-				if (isdefault)
+				if (eqQualHere)
 				{
-					num_sa_scans = num_sa_scans_prev_cols;
-					break;		/* done building indexBoundQuals */
+					/*
+					 * Don't need to add a skip array for an indexcol that
+					 * already has an '=' qual/equality constraint
+					 */
+					indexcol++;
+					indexSkipQuals = NIL;
 				}
+				eqQualHere = false;
 
-				/*
-				 * Apply indexcol's indexSkipQuals selectivity to ndistinct
-				 */
-				if (indexSkipQuals != NIL)
+				while (indexcol < iclause->indexcol)
 				{
-					List	   *partialSkipQuals;
-					Selectivity ndistinctfrac;
+					double		ndistinct;
+					bool		isdefault = true;
 
 					/*
-					 * If the index is partial, AND the index predicate with
-					 * the index-bound quals to produce a more accurate idea
-					 * of the number of distinct values for prior indexcol
+					 * A skipped attribute's ndistinct forms the basis of our
+					 * estimate of the total number of "array elements" used
+					 * by its skip array at runtime.  Look that up first.
 					 */
-					partialSkipQuals = add_predicate_to_index_quals(index,
-																	indexSkipQuals);
+					examine_indexcol_variable(root, index, indexcol, &vardata);
+					ndistinct = get_variable_numdistinct(&vardata, &isdefault);
 
-					ndistinctfrac = clauselist_selectivity(root, partialSkipQuals,
-														   index->rel->relid,
-														   JOIN_INNER,
-														   NULL);
+					if (indexcol == 0)
+					{
+						/*
+						 * Get an estimate of the leading column's correlation
+						 * in passing (avoids rereading variable stats below)
+						 */
+						if (HeapTupleIsValid(vardata.statsTuple))
+							correlation = btcost_correlation(index, &vardata);
+						have_correlation = true;
+					}
+
+					ReleaseVariableStats(vardata);
 
 					/*
-					 * If ndistinctfrac is selective (on its own), the scan is
-					 * unlikely to benefit from repositioning itself using
-					 * later quals.  Do not allow iclause->indexcol's quals to
-					 * be added to indexBoundQuals (it would increase descent
-					 * costs, without lowering numIndexTuples costs by much).
+					 * If ndistinct is a default estimate, conservatively
+					 * assume that no skipping will happen at runtime
 					 */
-					if (ndistinctfrac < DEFAULT_RANGE_INEQ_SEL)
+					if (isdefault)
 					{
 						num_sa_scans = num_sa_scans_prev_cols;
 						break;	/* done building indexBoundQuals */
 					}
 
-					/* Adjust ndistinct downward */
-					ndistinct = rint(ndistinct * ndistinctfrac);
-					ndistinct = Max(ndistinct, 1);
+					/*
+					 * Apply indexcol's indexSkipQuals selectivity to
+					 * ndistinct
+					 */
+					if (indexSkipQuals != NIL)
+					{
+						List	   *partialSkipQuals;
+						Selectivity ndistinctfrac;
+
+						/*
+						 * If the index is partial, AND the index predicate
+						 * with the index-bound quals to produce a more
+						 * accurate idea of the number of distinct values for
+						 * prior indexcol
+						 */
+						partialSkipQuals = add_predicate_to_index_quals(index,
+																		indexSkipQuals);
+
+						ndistinctfrac = clauselist_selectivity(root, partialSkipQuals,
+															   index->rel->relid,
+															   JOIN_INNER,
+															   NULL);
+
+						/*
+						 * If ndistinctfrac is selective (on its own), the
+						 * scan is unlikely to benefit from repositioning
+						 * itself using later quals.  Do not allow
+						 * iclause->indexcol's quals to be added to
+						 * indexBoundQuals (it would increase descent costs,
+						 * without lowering numIndexTuples costs by much).
+						 */
+						if (ndistinctfrac < DEFAULT_RANGE_INEQ_SEL)
+						{
+							num_sa_scans = num_sa_scans_prev_cols;
+							break;	/* done building indexBoundQuals */
+						}
+
+						/* Adjust ndistinct downward */
+						ndistinct = rint(ndistinct * ndistinctfrac);
+						ndistinct = Max(ndistinct, 1);
+					}
+
+					/*
+					 * When there's no inequality quals, account for the need
+					 * to find an initial value by counting -inf/+inf as a
+					 * value.
+					 *
+					 * We don't charge anything extra for possible next/prior
+					 * key index probes, which are sometimes used to find the
+					 * next valid skip array element (ahead of using the
+					 * located element value to relocate the scan to the next
+					 * position that might contain matching tuples).  It seems
+					 * hard to do better here.  Use of the skip support
+					 * infrastructure often avoids most next/prior key probes.
+					 * But even when it can't, there's a decent chance that
+					 * most individual next/prior key probes will locate a
+					 * leaf page whose key space overlaps all of the scan's
+					 * keys (even the lower-order keys) -- which also avoids
+					 * the need for a separate, extra index descent. Note also
+					 * that these probes are much cheaper than non-probe
+					 * primitive index scans: they're reliably very selective.
+					 */
+					if (indexSkipQuals == NIL)
+						ndistinct += 1;
+
+					/*
+					 * Update num_sa_scans estimate by multiplying by
+					 * ndistinct.
+					 *
+					 * We make the pessimistic assumption that there is no
+					 * naturally occurring cross-column correlation.  This is
+					 * often wrong, but it seems best to err on the side of
+					 * not expecting skipping to be helpful...
+					 */
+					num_sa_scans *= ndistinct;
+
+					/*
+					 * ...but back out of adding this latest group of 1 or
+					 * more skip arrays when num_sa_scans exceeds the total
+					 * number of index pages (revert to num_sa_scans from
+					 * before indexcol). This causes a sharp discontinuity in
+					 * cost (as a function of the indexcol's ndistinct), but
+					 * that is representative of actual runtime costs.
+					 *
+					 * Note that skipping is helpful when each primitive index
+					 * scan only manages to skip over 1 or 2 irrelevant leaf
+					 * pages on average.  Skip arrays bring savings in CPU
+					 * costs due to the scan not needing to evaluate
+					 * indexquals against every tuple, which can greatly
+					 * exceed any savings in I/O costs. This test is a test of
+					 * whether num_sa_scans implies that we're past the point
+					 * where the ability to skip ceases to lower the scan's
+					 * costs (even qual evaluation CPU costs).
+					 */
+					if (index->pages < num_sa_scans)
+					{
+						num_sa_scans = num_sa_scans_prev_cols;
+						break;	/* done building indexBoundQuals */
+					}
+
+					indexcol++;
+					indexSkipQuals = NIL;
 				}
 
 				/*
-				 * When there's no inequality quals, account for the need to
-				 * find an initial value by counting -inf/+inf as a value.
+				 * Finished considering the need to add skip arrays to bridge
+				 * an initial eqQualHere gap between the old and new index
+				 * columns (or there was no initial eqQualHere gap in the
+				 * first place).
 				 *
-				 * We don't charge anything extra for possible next/prior key
-				 * index probes, which are sometimes used to find the next
-				 * valid skip array element (ahead of using the located
-				 * element value to relocate the scan to the next position
-				 * that might contain matching tuples).  It seems hard to do
-				 * better here.  Use of the skip support infrastructure often
-				 * avoids most next/prior key probes.  But even when it can't,
-				 * there's a decent chance that most individual next/prior key
-				 * probes will locate a leaf page whose key space overlaps all
-				 * of the scan's keys (even the lower-order keys) -- which
-				 * also avoids the need for a separate, extra index descent.
-				 * Note also that these probes are much cheaper than non-probe
-				 * primitive index scans: they're reliably very selective.
+				 * If an initial gap could not be bridged, then new column's
+				 * quals (i.e. iclause->indexcol's quals) won't go into
+				 * indexBoundQuals, and so won't affect our final
+				 * numIndexTuples estimate.
 				 */
-				if (indexSkipQuals == NIL)
-					ndistinct += 1;
-
-				/*
-				 * Update num_sa_scans estimate by multiplying by ndistinct.
-				 *
-				 * We make the pessimistic assumption that there is no
-				 * naturally occurring cross-column correlation.  This is
-				 * often wrong, but it seems best to err on the side of not
-				 * expecting skipping to be helpful...
-				 */
-				num_sa_scans *= ndistinct;
-
-				/*
-				 * ...but back out of adding this latest group of 1 or more
-				 * skip arrays when num_sa_scans exceeds the total number of
-				 * index pages (revert to num_sa_scans from before indexcol).
-				 * This causes a sharp discontinuity in cost (as a function of
-				 * the indexcol's ndistinct), but that is representative of
-				 * actual runtime costs.
-				 *
-				 * Note that skipping is helpful when each primitive index
-				 * scan only manages to skip over 1 or 2 irrelevant leaf pages
-				 * on average.  Skip arrays bring savings in CPU costs due to
-				 * the scan not needing to evaluate indexquals against every
-				 * tuple, which can greatly exceed any savings in I/O costs.
-				 * This test is a test of whether num_sa_scans implies that
-				 * we're past the point where the ability to skip ceases to
-				 * lower the scan's costs (even qual evaluation CPU costs).
-				 */
-				if (index->pages < num_sa_scans)
-				{
-					num_sa_scans = num_sa_scans_prev_cols;
+				if (indexcol != iclause->indexcol)
 					break;		/* done building indexBoundQuals */
-				}
-
-				indexcol++;
-				indexSkipQuals = NIL;
 			}
 
-			/*
-			 * Finished considering the need to add skip arrays to bridge an
-			 * initial eqQualHere gap between the old and new index columns
-			 * (or there was no initial eqQualHere gap in the first place).
-			 *
-			 * If an initial gap could not be bridged, then new column's quals
-			 * (i.e. iclause->indexcol's quals) won't go into indexBoundQuals,
-			 * and so won't affect our final numIndexTuples estimate.
-			 */
-			if (indexcol != iclause->indexcol)
-				break;			/* done building indexBoundQuals */
-		}
+			Assert(indexcol == iclause->indexcol);
 
-		Assert(indexcol == iclause->indexcol);
-
-		/* Examine each indexqual associated with this index clause */
-		foreach(lc2, iclause->indexquals)
-		{
-			RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc2);
-			Expr	   *clause = rinfo->clause;
-			Oid			clause_op = InvalidOid;
-			int			op_strategy;
-
-			if (IsA(clause, OpExpr))
+			/* Examine each indexqual associated with this index clause */
+			foreach(lc2, iclause->indexquals)
 			{
-				OpExpr	   *op = (OpExpr *) clause;
+				RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc2);
+				Expr	   *clause = rinfo->clause;
+				Oid			clause_op = InvalidOid;
+				int			op_strategy;
 
-				clause_op = op->opno;
-			}
-			else if (IsA(clause, RowCompareExpr))
-			{
-				RowCompareExpr *rc = (RowCompareExpr *) clause;
-
-				clause_op = linitial_oid(rc->opnos);
-				found_row_compare = true;
-			}
-			else if (IsA(clause, ScalarArrayOpExpr))
-			{
-				ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
-				Node	   *other_operand = (Node *) lsecond(saop->args);
-				double		alength = estimate_array_length(root, other_operand);
-
-				clause_op = saop->opno;
-				found_array = true;
-				/* estimate SA descents by indexBoundQuals only */
-				if (alength > 1)
-					num_sa_scans *= alength;
-			}
-			else if (IsA(clause, NullTest))
-			{
-				NullTest   *nt = (NullTest *) clause;
-
-				if (nt->nulltesttype == IS_NULL)
+				if (IsA(clause, OpExpr))
 				{
-					found_is_null_op = true;
-					/* IS NULL is like = for selectivity/skip scan purposes */
-					eqQualHere = true;
+					OpExpr	   *op = (OpExpr *) clause;
+
+					clause_op = op->opno;
 				}
+				else if (IsA(clause, RowCompareExpr))
+				{
+					RowCompareExpr *rc = (RowCompareExpr *) clause;
+
+					clause_op = linitial_oid(rc->opnos);
+					found_row_compare = true;
+				}
+				else if (IsA(clause, ScalarArrayOpExpr))
+				{
+					ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
+					Node	   *other_operand = (Node *) lsecond(saop->args);
+					double		alength = estimate_array_length(root, other_operand);
+
+					clause_op = saop->opno;
+					/* estimate SA descents by indexBoundQuals only */
+					if (alength > 1)
+						num_sa_scans *= alength;
+				}
+				else if (IsA(clause, NullTest))
+				{
+					NullTest   *nt = (NullTest *) clause;
+
+					if (nt->nulltesttype == IS_NULL)
+					{
+						/*
+						 * IS NULL is like = for selectivity/skip scan
+						 * purposes
+						 */
+						eqQualHere = true;
+					}
+				}
+				else
+					elog(ERROR, "unsupported indexqual type: %d",
+						 (int) nodeTag(clause));
+
+				/* check for equality operator */
+				if (OidIsValid(clause_op))
+				{
+					op_strategy = get_op_opfamily_strategy(clause_op,
+														   index->opfamily[indexcol]);
+					Assert(op_strategy != 0);	/* not a member of opfamily?? */
+					if (op_strategy == BTEqualStrategyNumber)
+						eqQualHere = true;
+				}
+
+				indexBoundQuals = lappend(indexBoundQuals, rinfo);
+
+				/*
+				 * We apply inequality selectivities to estimate index descent
+				 * costs with scans that use skip arrays.  Save this
+				 * indexcol's RestrictInfos if it looks like they'll be needed
+				 * for that.
+				 */
+				if (!eqQualHere && !found_row_compare &&
+					indexcol < index->nkeycolumns - 1)
+					indexSkipQuals = lappend(indexSkipQuals, rinfo);
 			}
-			else
-				elog(ERROR, "unsupported indexqual type: %d",
-					 (int) nodeTag(clause));
-
-			/* check for equality operator */
-			if (OidIsValid(clause_op))
-			{
-				op_strategy = get_op_opfamily_strategy(clause_op,
-													   index->opfamily[indexcol]);
-				Assert(op_strategy != 0);	/* not a member of opfamily?? */
-				if (op_strategy == BTEqualStrategyNumber)
-					eqQualHere = true;
-			}
-
-			indexBoundQuals = lappend(indexBoundQuals, rinfo);
-
-			/*
-			 * We apply inequality selectivities to estimate index descent
-			 * costs with scans that use skip arrays.  Save this indexcol's
-			 * RestrictInfos if it looks like they'll be needed for that.
-			 */
-			if (!eqQualHere && !found_row_compare &&
-				indexcol < index->nkeycolumns - 1)
-				indexSkipQuals = lappend(indexSkipQuals, rinfo);
 		}
-	}
-
-	/*
-	 * If index is unique and we found an '=' clause for each column, we can
-	 * just assume numIndexTuples = 1 and skip the expensive
-	 * clauselist_selectivity calculations.  However, an array or NullTest
-	 * always invalidates that theory (even when eqQualHere has been set).
-	 */
-	if (index->unique &&
-		indexcol == index->nkeycolumns - 1 &&
-		eqQualHere &&
-		!found_array &&
-		!found_is_null_op)
-		numIndexTuples = 1.0;
-	else
-	{
-		List	   *selectivityQuals;
-		Selectivity btreeSelectivity;
 
 		/*
 		 * If the index is partial, AND the index predicate with the
