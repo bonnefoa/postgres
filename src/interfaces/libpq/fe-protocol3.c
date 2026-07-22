@@ -1931,6 +1931,13 @@ getCopyDataMessage(PGconn *conn)
 				return -1;
 		}
 
+		/*
+		 * An error may have been triggered while processing the message,
+		 * report it if it's the case
+		 */
+		if (conn->error_result && conn->status == CONNECTION_BAD)
+			return -2;
+
 		/* Drop the processed message and loop around for another */
 		pqParseDone(conn, conn->inCursor);
 	}
@@ -2428,6 +2435,13 @@ pqFunctionCall3(PGconn *conn, Oid fnid,
 		/* Completed parsing this message, keep going */
 		pqParseDone(conn, conn->inStart + 5 + msgLength);
 		needInput = false;
+
+		/*
+		 * An error may have been triggered while processing the message, bail
+		 * out
+		 */
+		if (conn->error_result && conn->status == CONNECTION_BAD)
+			return pqPrepareAsyncResult(conn);
 	}
 
 	/*
