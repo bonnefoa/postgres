@@ -18,6 +18,7 @@
 
 #include "lib/stringinfo.h"
 #include "libpq/libpq-be.h"
+#include "common/compression.h"
 
 
 /* avoid including waiteventset.h */
@@ -174,5 +175,48 @@ extern int	run_ssl_passphrase_command(const char *cmd, const char *prompt,
 extern bool check_ssl_key_file_permissions(const char *ssl_key_file,
 										   bool isServerStart);
 extern HostsFileLoadResult load_hosts(List **hosts, char **err_msg);
+
+/*
+ * declarations for variable in pqcomm_compress.c
+ */
+
+typedef struct pqcomm_compress
+{
+	pg_compress_algorithm algorithm;
+	pg_compress_specification specification;
+
+	/* Is there an opened compression frame? */
+	bool		opened_frame;
+
+	/* Buffer containing messages before compression */
+	StringInfoData inBuf;
+
+	/* Number of compressed messages currently buffered */
+	int			num_compressed_messages;
+
+	/* Output buffer for compression */
+	StringInfoData outBuf;
+
+	/* Private data to be used by the compressor. */
+	void	   *private_data;
+}			pqcomm_compress;
+
+extern PGDLLIMPORT int protocol_backend_compression_number_messages;
+extern PGDLLIMPORT int protocol_backend_compression_threshold;
+extern PGDLLIMPORT int protocol_backend_compression_allowed_algorithms;
+
+/*
+ * prototypes for functions in pqcomm_compress.c
+ */
+
+typedef struct
+{
+	int			(*flush) (pqcomm_compress * cs, bool block, bool end_frame);
+	int			(*compress_message) (pqcomm_compress * cs, bool block, bool flush, bool end_frame);
+	void		(*free_compress_context) (pqcomm_compress * cs);
+}			PQcompressMethods;
+extern int	pq_send_compressed_messages(bool block);
+extern const PQcompressMethods *pq_init_compressor_zstd(pqcomm_compress * cs);
+extern const PQcompressMethods *pq_init_compressor_lz4(pqcomm_compress * cs);
 
 #endif							/* LIBPQ_H */
