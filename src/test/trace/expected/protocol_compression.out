@@ -1,0 +1,68 @@
+                                                repeat                                                
+------------------------------------------------------------------------------------------------------
+ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+(1 row)
+
+ ?column? 
+----------
+        1
+(1 row)
+
+ text | ?column? | numeric | interval 
+------+----------+---------+----------
+ 1    | 42       |       1 | @ 1 sec
+(1 row)
+
+ ?column? 
+----------
+        1
+(1 row)
+
+ text | ?column? | numeric | interval 
+------+----------+---------+----------
+ 1    | 42       |       1 | @ 1 sec
+(1 row)
+
+ ?column? 
+----------
+        1
+(1 row)
+
+ ?column? 
+----------
+        1
+(1 row)
+
+ ?column? 
+----------
+        1
+(1 row)
+
+ generate_series 
+-----------------
+               1
+               2
+               3
+               4
+               5
+               6
+               7
+               8
+               9
+              10
+(10 rows)
+
+ generate_series 
+-----------------
+               1
+               2
+               3
+               4
+               5
+               6
+               7
+               8
+               9
+              10
+(10 rows)
+
