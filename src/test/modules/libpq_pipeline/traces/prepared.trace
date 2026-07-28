@@ -1,4 +1,4 @@
-F	NN	StartupMessage	 3 2 "user" "SSSS" "database" "SSSS" "application_name" "SSSS"
+F	NN	StartupMessage	 3 2 "user" "SSSS" "database" "SSSS" "application_name" "SSSS" "_pq_.supported_compressions" "SSSS"
 B	NN	ParameterStatus	 "IntervalStyle" "SSSS"
 B	NN	ParameterStatus	 "search_path" "SSSS"
 B	NN	ParameterStatus	 "is_superuser" "SSSS"

@@ -2560,6 +2560,21 @@ pqBuildStartupPacket3(PGconn *conn, int *packetlen,
 	return startpacket;
 }
 
+static
+void
+get_supported_compressions(PQExpBuffer supported_compressions)
+{
+#ifdef USE_LZ4
+	appendPQExpBuffer(supported_compressions, "lz4");
+#endif
+
+#ifdef USE_ZSTD
+	if (supported_compressions->len > 0)
+		appendPQExpBufferChar(supported_compressions, ',');
+	appendPQExpBuffer(supported_compressions, "zstd");
+#endif
+}
+
 /*
  * Build a startup packet given a filled-in PGconn structure.
  *
@@ -2576,6 +2591,7 @@ build_startup_packet(const PGconn *conn, char *packet,
 	size_t		packet_len = 0;
 	const PQEnvironmentOption *next_eo;
 	const char *val;
+	PQExpBufferData supported_compressions;
 
 	/* Protocol version comes first. */
 	if (packet)
@@ -2618,6 +2634,15 @@ build_startup_packet(const PGconn *conn, char *packet,
 
 	if (conn->client_encoding_initial && conn->client_encoding_initial[0])
 		ADD_STARTUP_OPTION("client_encoding", conn->client_encoding_initial);
+
+	initPQExpBuffer(&supported_compressions);
+	get_supported_compressions(&supported_compressions);
+	if (supported_compressions.len > 0)
+	{
+		supported_compressions.data[supported_compressions.len] = '\0';
+		ADD_STARTUP_OPTION("_pq_.supported_compressions", supported_compressions.data);
+	}
+	termPQExpBuffer(&supported_compressions);
 
 	/* Add any environment-driven GUC settings needed */
 	for (next_eo = options; next_eo->envName; next_eo++)
