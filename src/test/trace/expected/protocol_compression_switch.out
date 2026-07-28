@@ -1,0 +1,11 @@
+ ?column? 
+----------
+        1
+(1 row)
+
+ERROR:  Session was already initialized with zstd compression, changing compression is not supported
+ ?column? 
+----------
+        1
+(1 row)
+
