@@ -33,6 +33,9 @@ OBJS = \
 	$(WIN32RES) \
 	fe-auth-scram.o \
 	fe-cancel.o \
+	fe-compress.o \
+	fe-compress-zstd.o \
+	fe-compress-lz4.o \
 	fe-connect.o \
 	fe-exec.o \
 	fe-lobj.o \

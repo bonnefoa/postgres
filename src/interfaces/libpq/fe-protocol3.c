@@ -43,10 +43,10 @@
 	 (id) == PqMsg_NoticeResponse || \
 	 (id) == PqMsg_NotificationResponse || \
 	 (id) == PqMsg_RowDescription || \
+	 (id) == PqMsg_CompressedMessages || \
 	 (id) == PqMsg_ParameterDescription)
 
 
-static void handleFatalError(PGconn *conn);
 static void handleSyncLoss(PGconn *conn, char id, int msgLength);
 static int	getRowDescriptions(PGconn *conn, int msgLength, msg_buffer * msgBuf);
 static int	getParamDescriptions(PGconn *conn, int msgLength, msg_buffer * msgBuf);
@@ -61,6 +61,34 @@ static void reportErrorPosition(PQExpBuffer msg, const char *query,
 static size_t build_startup_packet(const PGconn *conn, char *packet,
 								   const PQEnvironmentOption *options);
 
+/*
+ * getMsgBuffer: returns the msg_buffer to consume.
+ *
+ * If compression is used, pqDecompressPayload is called to process any
+ * available bytes. If we have a full decompressed message after this,
+ * decompressBuffer will be returned as the buffer to consume.
+ * Otherwise, we return inBuffer.
+ *
+ * returns the buffer to use, or NULL on error.
+ */
+static msg_buffer *
+getMsgBuffer(PGconn *conn)
+{
+	if (conn->compress_algorithm == PG_COMPRESSION_NONE
+		|| conn->compress_cursor == 0)
+	{
+		/* No compression, just use inBuffer */
+		return &conn->inBuffer;
+	}
+
+	/* Compression is enabled, try to decompress */
+	if (pqDecompressPayload(conn) == 0)
+		return &conn->decompressBuffer;
+	if (conn->error_result && conn->status == CONNECTION_BAD)
+		return NULL;
+
+	return &conn->inBuffer;
+}
 
 /*
  * parseInput: if appropriate, parse input data from backend
@@ -73,13 +101,17 @@ pqParseInput3(PGconn *conn)
 	char		id;
 	int			msgLength;
 	int			avail;
-	msg_buffer *msgBuf = &conn->inBuffer;
+	msg_buffer *msgBuf;
 
 	/*
 	 * Loop to parse successive complete messages available in the buffer.
 	 */
 	for (;;)
 	{
+		msgBuf = getMsgBuffer(conn);
+		if (!msgBuf)
+			return;
+
 		/*
 		 * Try to read a message.  First get the type code and length. Return
 		 * if not enough data.
@@ -102,6 +134,18 @@ pqParseInput3(PGconn *conn)
 		}
 		if (msgLength > 30000 && !VALID_LONG_MESSAGE_TYPE(id))
 		{
+			handleSyncLoss(conn, id, msgLength);
+			return;
+		}
+		if (id != PqMsg_CompressedMessages
+			&& conn->decompressBuffer.start != conn->decompressBuffer.end
+			&& msgBuf != &conn->decompressBuffer)
+		{
+			/*
+			 * If we have data in the decompress buffer, only a
+			 * PqMsg_CompressedMessages is acceptable. Anything else is a
+			 * protocol issue
+			 */
 			handleSyncLoss(conn, id, msgLength);
 			return;
 		}
@@ -285,6 +329,22 @@ pqParseInput3(PGconn *conn)
 				case PqMsg_BindComplete:
 					/* Nothing to do for this message type */
 					break;
+				case PqMsg_CompressedMessages:
+					{
+						int			ret = pqReadCompressedMessage(conn, msgLength);
+
+						if (ret == EOF)
+							return;
+						else if (ret == 1)
+
+							/*
+							 * CompressedMessages is intentionally not
+							 * consumed as the decompress content needs to be
+							 * processed first
+							 */
+							continue;
+						break;
+					}
 				case PqMsg_CloseComplete:
 					/* If we're doing PQsendClose, we're done; else ignore */
 					if (conn->cmd_queue_head &&
@@ -485,7 +545,7 @@ pqParseInput3(PGconn *conn)
  * This is for errors where we need to abandon the connection.  The caller has
  * already saved the error message in conn->errorMessage.
  */
-static void
+void
 handleFatalError(PGconn *conn)
 {
 	/* build an error result holding the error message */
@@ -1243,9 +1303,9 @@ reportErrorPosition(PQExpBuffer msg, const char *query, int loc, int encoding)
 	 *
 	 * The only caller of reportErrorPosition() is pqBuildErrorMessage3(); it
 	 * gets its query from either a PQresultErrorField() or a PGcmdQueueEntry,
-	 * both of which must have fit into inBuffer/outBuffer. So slen fits
-	 * inside an int, but we can't assume that (slen * sizeof(int)) fits
-	 * inside a size_t.
+	 * both of which must have fit into
+	 * conn->inBuffer/decompressBuffer/outBuffer. So slen fits inside an int,
+	 * but we can't assume that (slen * sizeof(int)) fits inside a size_t.
 	 */
 	slen = strlen(wquery) + 1;
 	if (slen > SIZE_MAX / sizeof(int))
@@ -1811,12 +1871,15 @@ getCopyDataMessage(PGconn *conn, msg_buffer * *out_buf)
 	char		id;
 	int			msgLength;
 	int			avail;
-	msg_buffer *msgBuf = &conn->inBuffer;
-
-	*out_buf = msgBuf;
+	msg_buffer *msgBuf;
 
 	for (;;)
 	{
+		msgBuf = getMsgBuffer(conn);
+		if (!msgBuf)
+			return -2;
+		*out_buf = msgBuf;
+
 		/*
 		 * Do we have the next input message?  To make life simpler for async
 		 * callers, we keep returning 0 until the next message is fully
@@ -1828,6 +1891,13 @@ getCopyDataMessage(PGconn *conn, msg_buffer * *out_buf)
 		if (pqGetInt(&msgLength, 4, conn, msgBuf))
 			return 0;
 		if (msgLength < 4)
+		{
+			handleSyncLoss(conn, id, msgLength);
+			return -2;
+		}
+		if (id != PqMsg_CompressedMessages
+			&& conn->decompressBuffer.start != conn->decompressBuffer.end
+			&& msgBuf != &conn->decompressBuffer)
 		{
 			handleSyncLoss(conn, id, msgLength);
 			return -2;
@@ -1866,6 +1936,22 @@ getCopyDataMessage(PGconn *conn, msg_buffer * *out_buf)
 				if (getNotify(conn, msgBuf))
 					return 0;
 				break;
+			case PqMsg_CompressedMessages:
+				{
+					int			ret = pqReadCompressedMessage(conn, msgLength - 4);
+
+					if (ret == EOF)
+						return 0;
+					else if (ret == 1)
+
+						/*
+						 * CompressedMessages is intentionally not consumed as
+						 * the decompress content needs to be processed first
+						 */
+						continue;
+
+					break;
+				}
 			case PqMsg_NoticeResponse:
 				if (pqGetErrorNotice3(conn, false, msgBuf))
 					return 0;
@@ -1924,7 +2010,7 @@ int
 pqGetCopyData3(PGconn *conn, char **buffer, int async)
 {
 	int			msgLength;
-	msg_buffer *msgBuf = &conn->inBuffer;
+	msg_buffer *msgBuf;
 
 	for (;;)
 	{
@@ -2036,7 +2122,7 @@ pqGetlineAsync3(PGconn *conn, char *buffer, int bufsize)
 {
 	int			msgLength;
 	int			avail;
-	msg_buffer *msgBuf = &conn->inBuffer;
+	msg_buffer *msgBuf;
 
 	if (conn->asyncStatus != PGASYNC_COPY_OUT
 		&& conn->asyncStatus != PGASYNC_COPY_BOTH)
@@ -2192,7 +2278,7 @@ pqFunctionCall3(PGconn *conn, Oid fnid,
 	int			msgLength;
 	int			avail;
 	int			i;
-	msg_buffer *msgBuf = &conn->inBuffer;
+	msg_buffer *msgBuf;
 
 	/* already validated by PQnfn */
 	Assert(conn->pipelineStatus == PQ_PIPELINE_OFF);
@@ -2250,6 +2336,9 @@ pqFunctionCall3(PGconn *conn, Oid fnid,
 		 */
 		needInput = true;
 
+		msgBuf = getMsgBuffer(conn);
+		if (!msgBuf)
+			break;
 		msgBuf->cursor = msgBuf->start;
 		if (pqGetc(&id, conn, msgBuf))
 			continue;
@@ -2267,6 +2356,13 @@ pqFunctionCall3(PGconn *conn, Oid fnid,
 			break;
 		}
 		if (msgLength > 30000 && !VALID_LONG_MESSAGE_TYPE(id))
+		{
+			handleSyncLoss(conn, id, msgLength);
+			break;
+		}
+		if (id != PqMsg_CompressedMessages
+			&& conn->decompressBuffer.start != conn->decompressBuffer.end
+			&& msgBuf != &conn->decompressBuffer)
 		{
 			handleSyncLoss(conn, id, msgLength);
 			break;
@@ -2342,6 +2438,19 @@ pqFunctionCall3(PGconn *conn, Oid fnid,
 					continue;
 				status = PGRES_FATAL_ERROR;
 				break;
+			case PqMsg_CompressedMessages:
+				{
+					int			ret = pqReadCompressedMessage(conn, msgLength);
+
+					if (ret == EOF)
+						continue;
+					else if (ret == 1)
+					{
+						needInput = false;
+						continue;
+					}
+					break;
+				}
 			case PqMsg_NotificationResponse:
 				/* handle notify and go back to processing return values */
 				if (getNotify(conn, msgBuf))
