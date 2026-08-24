@@ -299,6 +299,16 @@ pqTraceOutput_Close(PQExpBuffer buf, const char *message, int *cursor)
 }
 
 static void
+pqTraceOutput_CompressedMessages(PQExpBuffer buf, const char *message, int *cursor, int length,
+								 bool suppress)
+{
+	appendPQExpBufferStr(buf, "CompressedMessages\t");
+	pqTraceOutputByte1(buf, message, cursor);
+	pqTraceOutputString(buf, message, cursor, false);
+	pqTraceOutputNbyte(buf, length - *cursor + 1, message, cursor, suppress);
+}
+
+static void
 pqTraceOutput_CommandComplete(PQExpBuffer buf, const char *message, int *cursor)
 {
 	appendPQExpBufferStr(buf, "CommandComplete\t");
@@ -646,11 +656,12 @@ pqTraceOutput_ReadyForQuery(PQExpBuffer buf, const char *message, int *cursor)
  * Print the given message to the trace output stream.
  */
 void
-pqTraceOutputMessage(PGconn *conn, const char *message, bool toServer)
+pqTraceOutputMessage(PGconn *conn, const char *message, bool toServer, bool compressed)
 {
 	char		id;
 	int			length;
 	char	   *prefix = toServer ? "F" : "B";
+	char	   *compressedPrefix = compressed ? "*" : "";
 	int			logCursor = 0;
 	bool		regress;
 	PQExpBufferData buf;
@@ -683,9 +694,9 @@ pqTraceOutputMessage(PGconn *conn, const char *message, bool toServer)
 	if (regress && !toServer && (id == PqMsg_ErrorResponse
 								 || id == PqMsg_NoticeResponse
 								 || id == PqMsg_ParameterStatus))
-		appendPQExpBuffer(&buf, "%s\tNN\t", prefix);
+		appendPQExpBuffer(&buf, "%s%s\tNN\t", prefix, compressedPrefix);
 	else
-		appendPQExpBuffer(&buf, "%s\t%d\t", prefix, length);
+		appendPQExpBuffer(&buf, "%s%s\t%d\t", prefix, compressedPrefix, length);
 
 	switch (id)
 	{
@@ -700,6 +711,9 @@ pqTraceOutputMessage(PGconn *conn, const char *message, bool toServer)
 		case PqMsg_CloseComplete:
 			appendPQExpBufferStr(&buf, "CloseComplete");
 			/* No message content */
+			break;
+		case PqMsg_CompressedMessages:
+			pqTraceOutput_CompressedMessages(&buf, message, &logCursor, length, regress);
 			break;
 		case PqMsg_NotificationResponse:
 			pqTraceOutput_NotificationResponse(&buf, message, &logCursor, regress);
