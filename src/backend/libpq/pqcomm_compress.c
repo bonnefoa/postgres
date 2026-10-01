@@ -27,6 +27,9 @@
 /* Force flush after a specific number of messages */
 int			protocol_backend_compression_number_messages;
 
+/* Force flush after a specific number of bytes were compressed  */
+int			protocol_backend_compression_number_bytes;
+
 /* Minimum byte threshold before compressing messages */
 int			protocol_backend_compression_threshold;
 
@@ -40,7 +43,7 @@ int			protocol_backend_compression_allowed_algorithms;
 static void pq_compress_comm_reset(void);
 static int	pq_compress_flush(void);
 static int	pq_compress_flush_if_writable(void);
-static int	_pq_compress_flush(void);
+static int	_pq_compress_flush(bool end_frame);
 static bool pq_compress_is_send_pending(void);
 static int	pq_compress_putmessage(char msgtype, const char *s, size_t len);
 static void pq_compress_putmessage_noblock(char msgtype, const char *s, size_t len);
@@ -150,6 +153,7 @@ pq_send_uncompressed_messages(bool block)
 	 */
 	resetStringInfo(&cs->inBuf);
 	resetStringInfo(&cs->msgTypes);
+	cs->bytes_compressed = 0;
 	return 0;
 }
 
@@ -205,6 +209,7 @@ pq_send_compressed_message(bool block, bool partial)
 	cs->msgTypes.data[cs->msgTypes.len] = '\0';
 	pq_send_ascii_string(&buf, cs->msgTypes.data);
 	resetStringInfo(&cs->msgTypes);
+	cs->bytes_compressed = 0;
 
 	/* And send the compressed payload itself. */
 	pq_sendbytes(&buf, cs->outBuf.data, cs->outBuf.len);
@@ -252,16 +257,13 @@ pq_send_compressed_message(bool block, bool partial)
 static int
 _pq_compress_putmessage(char msgtype, const char *s, size_t len, bool block)
 {
+	bool		crossed_number_threshold = false;
+	bool		crossed_bytes_threshold = false;
+
 	/* No-op if reentrant call */
 	if (PqCompressBusy)
 		return 0;
 	PqCompressBusy = true;
-
-	pq_sendbyte(&cs->inBuf, msgtype);
-	pq_sendint32(&cs->inBuf, len + 4);
-	/* message may be empty */
-	if (len > 0)
-		pq_sendbytes(&cs->inBuf, s, len);
 
 	/*
 	 * Transactional proxies need to inspect the content of some packets. To
@@ -276,56 +278,72 @@ _pq_compress_putmessage(char msgtype, const char *s, size_t len, bool block)
 		|| msgtype == PqMsg_CommandComplete
 		|| msgtype == PqMsg_BackendKeyData)
 	{
-		if (cs->opened_frame)
-		{
-			/*
-			 * If transaction frame is enabled, we need to close the current
-			 * frame if we just finished a transaction.
-			 */
-			bool		end_frame = protocol_backend_compression_transaction_frame
-				&& msgtype == PqMsg_ReadyForQuery
-				&& cs->opened_frame
-				&& !IsTransactionBlock();
+		/*
+		 * If transaction frame is enabled, we need to close the current frame
+		 * if we just finished a transaction.
+		 */
+		bool		end_frame = protocol_backend_compression_transaction_frame
+			&& msgtype == PqMsg_ReadyForQuery
+			&& cs->opened_frame
+			&& !IsTransactionBlock();
 
-			/* Flush any compressed payload first */
-			if (PqCompressMethods->flush(cs, block, end_frame))
-				goto fail;
-			if (pq_send_compressed_message(block, false))
-				goto fail;
-			if (end_frame)
-				cs->opened_frame = false;
-		}
-
-		/* And send the uncompressed message */
-		if (pq_send_uncompressed_messages(block))
+		/* Flush any compressed payload first */
+		if (_pq_compress_flush(end_frame))
 			goto fail;
+		if (end_frame)
+			cs->opened_frame = false;
+
+		/*
+		 * And send uncompressed message using PrevPQcommMethod
+		 */
+		if (block)
+		{
+			if (PrevPQcommMethod->putmessage(msgtype, s, len))
+				goto fail;
+		}
+		else
+		{
+			PrevPQcommMethod->putmessage_noblock(msgtype, s, len);
+		}
 
 		PqCompressBusy = false;
 		return 0;
 	}
 
-	if (cs->pending_compressed_messages || cs->inBuf.len > protocol_backend_compression_threshold)
+	pq_sendbyte(&cs->inBuf, msgtype);
+	pq_sendint32(&cs->inBuf, len + 4);
+	/* message may be empty */
+	if (len > 0)
+		pq_sendbytes(&cs->inBuf, s, len);
+
+	if (cs->inBuf.len > protocol_backend_compression_threshold)
 	{
 		/*
 		 * We either crossed the compress threshold, or the threshold was
-		 * already crossed with previous messages. Compress this message.
+		 * already crossed with previous messages. Enable compression.
 		 */
-		bool		start_frame = cs->opened_frame == false;
-
 		cs->pending_compressed_messages = true;
 		cs->opened_frame = true;
-		if (PqCompressMethods->compress_message(cs, block, start_frame))
+	}
+
+
+	if (cs->pending_compressed_messages)
+	{
+		if (PqCompressMethods->compress_message(cs, block, false, false))
 			goto fail;
-		resetStringInfo(&cs->inBuf);
+		cs->bytes_compressed += len + 4 + 1;
 	}
 
 	/* Keep track of the message type */
 	appendStringInfoChar(&cs->msgTypes, msgtype);
 
-	/* Flush if we've crossed the number of messages threshold */
-	if (protocol_backend_compression_number_messages > 0
-		&& cs->msgTypes.len > protocol_backend_compression_number_messages)
-		if (_pq_compress_flush())
+	/* Flush if we've crossed the message or bytes threshold */
+	crossed_number_threshold = protocol_backend_compression_number_messages > 0
+		&& cs->msgTypes.len > protocol_backend_compression_number_messages;
+	crossed_bytes_threshold = protocol_backend_compression_number_bytes > 0
+		&& cs->bytes_compressed > protocol_backend_compression_number_bytes;
+	if (crossed_bytes_threshold || crossed_number_threshold)
+		if (_pq_compress_flush(false))
 			goto fail;
 
 	PqCompressBusy = false;
@@ -356,10 +374,10 @@ pq_compress_comm_reset(void)
  * returns 0 if OK, EOF if trouble
  */
 static int
-_pq_compress_flush(void)
+_pq_compress_flush(bool end_frame)
 {
-	if (cs->pending_compressed_messages
-		&& (PqCompressMethods->flush(cs, true, false)))
+	if ((cs->pending_compressed_messages || end_frame)
+		&& (PqCompressMethods->flush(cs, true, end_frame)))
 		return EOF;
 
 	/*
@@ -385,7 +403,7 @@ pq_compress_flush(void)
 		return 0;
 
 	PqCompressBusy = true;
-	if (_pq_compress_flush())
+	if (_pq_compress_flush(false))
 		goto fail;
 
 	PqCompressBusy = false;

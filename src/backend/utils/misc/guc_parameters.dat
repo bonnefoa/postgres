@@ -2447,6 +2447,14 @@
   assign_hook => 'assign_protocol_backend_allowed_algorithms',
 },
 
+{ name => 'protocol_backend_compression_number_bytes', type => 'int', context => 'PGC_USERSET', group => 'CLIENT_CONN_STATEMENT',
+  short_desc => 'Number of bytes compressed before flushing.',
+  variable => 'protocol_backend_compression_number_bytes',
+  boot_val => '0',
+  min => '0',
+  max => 'INT_MAX',
+},
+
 { name => 'protocol_backend_compression_number_messages', type => 'int', context => 'PGC_USERSET', group => 'CLIENT_CONN_STATEMENT',
   short_desc => 'Number of messages in a compressed payload before flushing.',
   variable => 'protocol_backend_compression_number_messages',

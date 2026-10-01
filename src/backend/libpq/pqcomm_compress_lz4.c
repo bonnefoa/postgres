@@ -34,10 +34,11 @@ typedef struct pqcomm_lz4
 {
 	LZ4F_cctx  *ctx;
 	LZ4F_preferences_t prefs;
+	bool		frame_started;
 }			pqcomm_lz4;
 
 static int	pq_compress_flush_lz4(pqcomm_compress * cs, bool block, bool end_frame);
-static int	pq_compress_message_lz4(pqcomm_compress * cs, bool block, bool start_frame);
+static int	pq_compress_message_lz4(pqcomm_compress * cs, bool block, bool flush, bool end_frame);
 static void pq_compress_free_lz4(pqcomm_compress * cs);
 
 static const PQcompressMethods PqCompressMethodsLz4 = {
@@ -147,14 +148,21 @@ pq_compress_start_lz4_frame(pqcomm_compress * cs)
  * returns 0 if OK, EOF if trouble
  */
 static int
-pq_compress_message_lz4(pqcomm_compress * cs, bool block, bool start_frame)
+pq_compress_message_lz4(pqcomm_compress * cs, bool block, bool flush, bool end_frame)
 {
 	pqcomm_lz4 *lz4_state = (pqcomm_lz4 *) cs->private_data;
 	size_t		remaining = cs->inBuf.len;
+	size_t		ret = 0;
+
+	if (!lz4_state->frame_started && cs->inBuf.len == 0)
+		return 0;
 
 	/* Start new lz4 frame if necessary */
-	if (start_frame)
+	if (!lz4_state->frame_started)
+	{
 		pq_compress_start_lz4_frame(cs);
+		lz4_state->frame_started = true;
+	}
 
 	Assert(cs->inBuf.cursor == 0);
 
@@ -196,6 +204,29 @@ pq_compress_message_lz4(pqcomm_compress * cs, bool block, bool start_frame)
 		remaining = cs->inBuf.len - cs->inBuf.cursor;
 	}
 
+	if (end_frame)
+	{
+		ret = LZ4F_compressEnd(lz4_state->ctx,
+							   cs->outBuf.data + cs->outBuf.len,
+							   cs->outBuf.maxlen - cs->outBuf.len,
+							   NULL);
+		lz4_state->frame_started = false;
+	}
+	else if (flush)
+		ret = LZ4F_flush(lz4_state->ctx,
+						 cs->outBuf.data + cs->outBuf.len,
+						 cs->outBuf.maxlen - cs->outBuf.len,
+						 NULL);
+
+	if (LZ4F_isError(ret))
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("could not flush lz4 compressed data: %s", LZ4F_getErrorName(ret))));
+
+	/* Update output buffer len */
+	cs->outBuf.len += ret;
+
+	resetStringInfo(&cs->inBuf);
 	return 0;
 }
 
@@ -207,40 +238,7 @@ pq_compress_message_lz4(pqcomm_compress * cs, bool block, bool start_frame)
 static int
 pq_compress_flush_lz4(pqcomm_compress * cs, bool block, bool end_frame)
 {
-	pqcomm_lz4 *lz4_state = (pqcomm_lz4 *) cs->private_data;
-	size_t		ret;
-	size_t		bound;
-
-	/* Make sure the output buffer has enough room for the flush */
-	bound = LZ4F_compressBound(0, &lz4_state->prefs);
-	if (cs->outBuf.maxlen - cs->outBuf.len < bound)
-	{
-		if (pq_send_compressed_message(block, false))
-			return EOF;
-	}
-	Assert(cs->outBuf.maxlen - cs->outBuf.len >= bound);
-
-	if (end_frame)
-	{
-		ret = LZ4F_compressEnd(lz4_state->ctx,
-							   cs->outBuf.data + cs->outBuf.len,
-							   cs->outBuf.maxlen - cs->outBuf.len,
-							   NULL);
-	}
-	else
-		ret = LZ4F_flush(lz4_state->ctx,
-						 cs->outBuf.data + cs->outBuf.len,
-						 cs->outBuf.maxlen - cs->outBuf.len,
-						 NULL);
-	if (LZ4F_isError(ret))
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not flush lz4 compressed data: %s", LZ4F_getErrorName(ret))));
-
-	/* Update output buffer len */
-	cs->outBuf.len += ret;
-
-	return 0;
+	return pq_compress_message_lz4(cs, block, true, end_frame);
 }
 
 /*

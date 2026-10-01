@@ -34,7 +34,7 @@ typedef struct pqcomm_zstd
 }			pqcomm_zstd;
 
 static int	pq_compress_flush_zstd(pqcomm_compress * cs, bool block, bool end_frame);
-static int	pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool start_frame);
+static int	pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool flush, bool end_frame);
 static void pq_compress_free_zstd(pqcomm_compress * cs);
 
 static const PQcompressMethods PqCompressMethodsZstd = {
@@ -146,12 +146,13 @@ pq_init_compressor_zstd(pqcomm_compress * cs, pg_compress_specification *specifi
  * returns 0 if OK, EOF if trouble
  */
 static int
-pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool start_frame)
+pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool flush, bool end_frame)
 {
 	ZSTD_inBuffer inBuf;
 	size_t		yet_to_flush = 0;
 	ZSTD_outBuffer outBuf;
 	pqcomm_zstd *zstate = (pqcomm_zstd *) cs->private_data;
+	ZSTD_EndDirective end_op = ZSTD_e_continue;
 
 	inBuf.src = cs->inBuf.data;
 	inBuf.size = cs->inBuf.len;
@@ -161,12 +162,17 @@ pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool start_frame)
 	outBuf.size = cs->outBuf.maxlen;
 	outBuf.pos = cs->outBuf.len;
 
+	if (end_frame)
+		end_op = ZSTD_e_end;
+	else if (flush)
+		end_op = ZSTD_e_flush;
+
 	do
 	{
 		yet_to_flush =
 			ZSTD_compressStream2(zstate->cctx,
 								 &outBuf,
-								 &inBuf, ZSTD_e_continue);
+								 &inBuf, end_op);
 		if (ZSTD_isError(yet_to_flush))
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
@@ -189,6 +195,7 @@ pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool start_frame)
 		}
 	} while (yet_to_flush > 0);
 
+	resetStringInfo(&cs->inBuf);
 	return 0;
 }
 
@@ -203,43 +210,7 @@ pq_compress_message_zstd(pqcomm_compress * cs, bool block, bool start_frame)
 static int
 pq_compress_flush_zstd(pqcomm_compress * cs, bool block, bool end_frame)
 {
-	size_t		yet_to_flush;
-	pqcomm_zstd *zstate = (pqcomm_zstd *) cs->private_data;
-	ZSTD_outBuffer outBuf;
-
-	outBuf.dst = cs->outBuf.data;
-	outBuf.size = cs->outBuf.maxlen;
-	outBuf.pos = cs->outBuf.len;
-
-	do
-	{
-		ZSTD_inBuffer in = {NULL, 0, 0};
-		size_t		max_needed = ZSTD_compressBound(0);
-
-		/*
-		 * If the output buffer is left with not enough space, send the
-		 * compressed bytes to the underlying pqcomm.
-		 */
-		if (outBuf.size - outBuf.pos < max_needed)
-		{
-			if (pq_send_compressed_message(block, false))
-				return EOF;
-			outBuf.pos = cs->outBuf.len;
-		}
-
-		yet_to_flush = ZSTD_compressStream2(zstate->cctx,
-											&outBuf,
-											&in, end_frame ? ZSTD_e_end : ZSTD_e_flush);
-		/* Keep compress buffer in sync */
-		cs->outBuf.len = outBuf.pos;
-
-		if (ZSTD_isError(yet_to_flush))
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("could not compress data: %s",
-							ZSTD_getErrorName(yet_to_flush))));
-	} while (yet_to_flush > 0);
-	return 0;
+	return pq_compress_message_zstd(cs, block, true, end_frame);
 }
 
 /*
