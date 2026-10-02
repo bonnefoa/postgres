@@ -30,6 +30,8 @@ int			protocol_backend_compression_number_messages;
 /* Force flush after a specific number of bytes were compressed  */
 int			protocol_backend_compression_number_bytes;
 
+int			protocol_backend_compression_outbuf_bytes;
+
 /* Minimum byte threshold before compressing messages */
 int			protocol_backend_compression_threshold;
 
@@ -197,6 +199,11 @@ pq_send_compressed_message(bool block, bool partial)
 		/* No compressed payload to send */
 		return 0;
 
+	if (cs->bytes_compressed < cs->outBuf.len)
+	{
+		cs->give_up = true;
+	}
+
 	pq_beginmessage(&buf, PqMsg_CompressedMessages);
 
 	/* Send compression algorithm used. */
@@ -258,7 +265,8 @@ static int
 _pq_compress_putmessage(char msgtype, const char *s, size_t len, bool block)
 {
 	bool		crossed_number_threshold = false;
-	bool		crossed_bytes_threshold = false;
+	bool		crossed_in_bytes_threshold = false;
+	bool		crossed_out_bytes_threshold = false;
 
 	/* No-op if reentrant call */
 	if (PqCompressBusy)
@@ -339,10 +347,16 @@ _pq_compress_putmessage(char msgtype, const char *s, size_t len, bool block)
 
 	/* Flush if we've crossed the message or bytes threshold */
 	crossed_number_threshold = protocol_backend_compression_number_messages > 0
-		&& cs->msgTypes.len > protocol_backend_compression_number_messages;
-	crossed_bytes_threshold = protocol_backend_compression_number_bytes > 0
-		&& cs->bytes_compressed > protocol_backend_compression_number_bytes;
-	if (crossed_bytes_threshold || crossed_number_threshold)
+		&& cs->msgTypes.len >= protocol_backend_compression_number_messages;
+	crossed_in_bytes_threshold = protocol_backend_compression_number_bytes > 0
+		&& cs->bytes_compressed >= protocol_backend_compression_number_bytes;
+	crossed_out_bytes_threshold = protocol_backend_compression_outbuf_bytes > 0
+    && cs->msgTypes.len > 0
+		&& cs->outBuf.len >= protocol_backend_compression_outbuf_bytes;
+
+	if (crossed_in_bytes_threshold
+		|| crossed_number_threshold
+		|| crossed_out_bytes_threshold)
 		if (_pq_compress_flush(false))
 			goto fail;
 

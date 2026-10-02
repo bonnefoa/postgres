@@ -2463,6 +2463,14 @@
   max => 'INT_MAX',
 },
 
+{ name => 'protocol_backend_compression_outbuf_bytes', type => 'int', context => 'PGC_USERSET', group => 'CLIENT_CONN_STATEMENT',
+  short_desc => 'Number of bytes compressed before flushing.',
+  variable => 'protocol_backend_compression_outbuf_bytes',
+  boot_val => '0',
+  min => '0',
+  max => 'INT_MAX',
+},
+
 { name => 'protocol_backend_compression_threshold', type => 'int', context => 'PGC_USERSET', group => 'CLIENT_CONN_STATEMENT',
   short_desc => 'Use compression when the message bytes exceeds this threshold.',
   variable => 'protocol_backend_compression_threshold',

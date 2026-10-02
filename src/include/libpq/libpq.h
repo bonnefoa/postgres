@@ -194,6 +194,7 @@ typedef struct pqcomm_compress
 	StringInfoData inBuf;
 	/* Track how many bytes are compressed */
 	int			bytes_compressed;
+	bool		give_up;
 	/* Track message types added to the current frame */
 	StringInfoData msgTypes;
 
@@ -206,6 +207,7 @@ typedef struct pqcomm_compress
 
 extern PGDLLIMPORT int protocol_backend_compression_number_messages;
 extern PGDLLIMPORT int protocol_backend_compression_number_bytes;
+extern PGDLLIMPORT int protocol_backend_compression_outbuf_bytes;
 extern PGDLLIMPORT int protocol_backend_compression_threshold;
 extern PGDLLIMPORT bool protocol_backend_compression_transaction_frame;
 extern PGDLLIMPORT int protocol_backend_compression_allowed_algorithms;
