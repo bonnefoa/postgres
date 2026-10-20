@@ -2427,6 +2427,7 @@
   short_desc => 'Sets the compression algorithm to use for backend messages.',
   variable => 'protocol_backend_compression',
   boot_val => '"none"',
+  check_hook => 'check_protocol_backend_compression',
   assign_hook => 'assign_protocol_backend_compression',
 },
 

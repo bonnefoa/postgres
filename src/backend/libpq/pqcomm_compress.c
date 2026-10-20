@@ -441,6 +441,73 @@ prev_put_message(char msgtype, const char *s, size_t len, bool block)
 	return 0;
 }
 
+bool
+check_protocol_backend_compression(char **newval, void **extra, GucSource source)
+{
+	char	   *algorithm_name = NULL;
+	char	   *detail = NULL;
+	pg_compress_algorithm algorithm;
+	const		PQcompressMethods *new_compress_methods = NULL;
+  char	   *str = *newval;
+
+	if (MyProcPort == NULL)
+		/* If there's no client connection, just ignore compression setting */
+		return true;
+
+	/* Extract algorithm */
+	parse_compress_options(str, &algorithm_name, &detail);
+	if (!parse_compress_algorithm(algorithm_name, &algorithm)) {
+    GUC_check_errdetail( "invalid value for parameter \"protocol_backend_compression\": \"%s\"",
+						str);
+    return false;
+  }
+
+	if (algorithm == PG_COMPRESSION_NONE)
+		return true;
+
+	/* Is the compression algorithm allowed? */
+	if ((protocol_backend_compression_allowed_algorithms & (1 << algorithm)) == 0) {
+    GUC_check_errdetail("%s compression is not permitted by \"protocol_backend_compression_allowed_algorithms\"",
+						get_compress_algorithm_name(algorithm));
+    return false;
+  }
+
+	if (cs && cs->algorithm != algorithm) {
+    GUC_check_errdetail("Session was already initialized with %s compression, changing compression is not supported",
+							get_compress_algorithm_name(cs->algorithm));
+    return false;
+  }
+
+	switch (algorithm)
+	{
+		case PG_COMPRESSION_ZSTD:
+			if (!MyProcPort->supported_compress_zstd)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("zstd compression is not supported by client")));
+			}
+			break;
+		case PG_COMPRESSION_LZ4:
+			if (!MyProcPort->supported_compress_lz4)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("lz4 compression is not supported by client")));
+			}
+			break;
+		case PG_COMPRESSION_GZIP:
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("gzip compression is not supported")));
+			break;
+		case PG_COMPRESSION_NONE:
+			pg_unreachable();
+	};
+
+  return true;
+}
+
 /*
  * GUC assign hook for protocol_backend_compression: switch PqCommMethods to the
  * implementation matching the newly selected compression method.
